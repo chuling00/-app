@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.Button
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -20,6 +21,8 @@ class CaptureActivity : AppCompatActivity() {
     private var imageCapture: ImageCapture? = null
     private lateinit var captureButton: Button
     private lateinit var switchCameraButton: ImageView
+    private var isUsingBackCamera = true
+    private var cameraProvider: ProcessCameraProvider? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,59 +33,95 @@ class CaptureActivity : AppCompatActivity() {
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
-        // 请求相机权限
         if (allPermissionsGranted()) {
             startCamera()
         } else {
             requestPermissions.launch(REQUIRED_PERMISSIONS)
         }
 
-        // 拍摄按钮监听
         captureButton.setOnClickListener {
             takePhoto()
         }
 
-        // 切换前后摄像头（可选功能）
         switchCameraButton.setOnClickListener {
-            // TODO: 切换摄像头的逻辑
+            switchCamera()
         }
     }
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(findViewById<androidx.camera.view.PreviewView>(R.id.previewView).surfaceProvider)
-            }
-
-            imageCapture = ImageCapture.Builder().build()
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
-            } catch (exc: Exception) {
-                Log.e("CaptureActivity", "Use case binding failed", exc)
-            }
+            cameraProvider = cameraProviderFuture.get() // 赋值
+            bindCameraUseCases() // 绑定相机
         }, ContextCompat.getMainExecutor(this))
     }
 
+    private fun bindCameraUseCases() {
+        val cameraProvider = cameraProvider ?: return
+        val previewView = findViewById<androidx.camera.view.PreviewView>(R.id.previewView)
+
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+
+        imageCapture = ImageCapture.Builder().build()
+
+        val cameraSelector = CameraSelector.Builder()
+            .requireLensFacing(if (isUsingBackCamera) CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT)
+            .build()
+
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
+        } catch (exc: Exception) {
+            Log.e("CaptureActivity", "Use case binding failed", exc)
+        }
+    }
+
+    private fun switchCamera() {
+        isUsingBackCamera = !isUsingBackCamera
+        bindCameraUseCases() // 重新绑定相机
+    }
+
     private fun takePhoto() {
-        val photoFile = File(externalMediaDirs.firstOrNull(), "photo_${System.currentTimeMillis()}.jpg")
+        if (imageCapture == null) {
+            Log.e("CaptureActivity", "ImageCapture is not initialized")
+            return
+        }
+
+        // 限制最多 2000 张
+        val projectDir = File(getExternalFilesDir(null), "projects/当前项目名")
+        if (!projectDir.exists()) projectDir.mkdirs()
+
+        val photoFiles = projectDir.listFiles()?.filter { it.extension == "jpg" } ?: emptyList()
+        if (photoFiles.size >= 2000) {
+            Toast.makeText(this, "已达到最大拍摄数量 2000 张！", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 生成文件名
+        val photoFile = File(projectDir, "photo_${System.currentTimeMillis()}.jpg")
+
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
         imageCapture?.takePicture(outputOptions, ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    Log.d("CaptureActivity", "Photo saved: ${photoFile.absolutePath}")
+                    Log.d("CaptureActivity", "照片已保存: ${photoFile.absolutePath}")
+                    runOnUiThread {
+                        Toast.makeText(this@CaptureActivity, "拍摄成功！", Toast.LENGTH_SHORT).show()
+                    }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    Log.e("CaptureActivity", "Photo capture failed", exception)
+                    Log.e("CaptureActivity", "拍摄失败", exception)
+                    runOnUiThread {
+                        Toast.makeText(this@CaptureActivity, "拍摄失败！", Toast.LENGTH_SHORT).show()
+                    }
                 }
             })
     }
+
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
