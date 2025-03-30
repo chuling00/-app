@@ -1,29 +1,131 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<RelativeLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:background="#000000">
 
+    <!-- 预览区域 -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter" />
 
-    <Button
-        android:id="@+id/btn_capture"
+    <!-- 左侧工具栏 -->
+    <LinearLayout
         android:layout_width="80dp"
-        android:layout_height="80dp"
-        android:layout_centerHorizontal="true"
-        android:layout_alignParentBottom="true"
-        android:layout_marginBottom="20dp"
-        android:backgroundTint="#FF5722"
-        android:text="拍摄" />
+        android:layout_height="match_parent"
+        android:layout_alignParentStart="true"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:background="#80000000"
+        android:padding="8dp">
 
-    <ImageView
-        android:id="@+id/btn_switch_camera"
-        android:layout_width="50dp"
-        android:layout_height="50dp"
+        <!-- 返回按钮 -->
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_back"/>
+
+        <!-- 撤销按钮 -->
+        <TextView
+            android:id="@+id/btnUndo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="撤销"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:padding="8dp"
+            android:layout_marginTop="32dp"/>
+
+        <!-- 竖直滑块 -->
+        <SeekBar
+            android:id="@+id/seekBarIndicator"
+            android:layout_width="150dp"
+            android:layout_height="wrap_content"
+            android:rotation="270"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="32dp"
+            android:max="100"
+            android:progress="0"
+            android:progressDrawable="@drawable/seekbar_progress"
+            android:thumb="@drawable/seekbar_thumb"
+            android:splitTrack="false"
+            android:translationX="-40dp"/>
+
+        <!-- 更多按钮 -->
+        <TextView
+            android:id="@+id/btnMore"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="..."
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:gravity="center"
+            android:padding="8dp"/>
+
+        <!-- 切换摄像头按钮 -->
+        <ImageButton
+            android:id="@+id/btnSwitchCamera"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_gravity="center"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_switch_camera"
+            android:padding="2dp"
+            android:layout_marginTop="32dp"/>
+    </LinearLayout>
+
+    <!-- 右侧工具栏 -->
+    <LinearLayout
+        android:layout_width="80dp"
+        android:layout_height="match_parent"
         android:layout_alignParentEnd="true"
-        android:layout_margin="20dp"
-        android:src="@drawable/ic_switch_camera"
-        android:background="?attr/selectableItemBackgroundBorderless"/>
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:background="#80000000"
+        android:padding="8dp">
+
+        <!-- 完成按钮 -->
+        <TextView
+            android:id="@+id/btnFinish"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="完成"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:padding="8dp"/>
+
+        <!-- 拍摄按钮 -->
+        <TextView
+            android:id="@+id/btnShoot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="拍摄"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:padding="16dp"
+            android:layout_marginTop="32dp"
+            android:layout_marginBottom="32dp" />
+
+        <!-- 连拍按钮 -->
+        <TextView
+            android:id="@+id/btnBurst"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="连拍 1"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:padding="8dp"/>
+    </LinearLayout>
 </RelativeLayout>

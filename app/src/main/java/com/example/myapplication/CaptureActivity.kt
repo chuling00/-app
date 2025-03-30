@@ -4,9 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
-import android.widget.Button
-import android.widget.ImageView
-import android.widget.Toast
+import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -19,17 +17,26 @@ import java.util.concurrent.Executors
 class CaptureActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private var imageCapture: ImageCapture? = null
-    private lateinit var captureButton: Button
-    private lateinit var switchCameraButton: ImageView
+    private lateinit var switchCameraButton: ImageButton
+    private lateinit var btnBack: ImageButton
+    private lateinit var btnUndo: TextView
+    private lateinit var btnMore: TextView
+    private lateinit var btnFinish: TextView
+    private lateinit var btnBurst: TextView
+    private lateinit var btnShoot: TextView
+    private lateinit var seekBarIndicator: SeekBar
     private var isUsingBackCamera = true
     private var cameraProvider: ProcessCameraProvider? = null
+    private var burstCount = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_capture)
 
-        captureButton = findViewById(R.id.btn_capture)
-        switchCameraButton = findViewById(R.id.btn_switch_camera)
+        // 初始化视图
+        initializeViews()
+        // 设置点击事件
+        setupClickListeners()
 
         cameraExecutor = Executors.newSingleThreadExecutor()
 
@@ -38,21 +45,69 @@ class CaptureActivity : AppCompatActivity() {
         } else {
             requestPermissions.launch(REQUIRED_PERMISSIONS)
         }
+    }
 
-        captureButton.setOnClickListener {
-            takePhoto()
+    private fun initializeViews() {
+        switchCameraButton = findViewById(R.id.btnSwitchCamera)
+        btnBack = findViewById(R.id.btnBack)
+        btnUndo = findViewById(R.id.btnUndo)
+        btnMore = findViewById(R.id.btnMore)
+        btnFinish = findViewById(R.id.btnFinish)
+        btnBurst = findViewById(R.id.btnBurst)
+        btnShoot = findViewById(R.id.btnShoot)
+        seekBarIndicator = findViewById(R.id.seekBarIndicator)
+    }
+
+    private fun setupClickListeners() {
+        btnBack.setOnClickListener {
+            finish() // 结束当前Activity，返回上一页
         }
 
         switchCameraButton.setOnClickListener {
             switchCamera()
         }
+
+        btnUndo.setOnClickListener {
+            // 处理撤销操作
+            Toast.makeText(this, "撤销上一步", Toast.LENGTH_SHORT).show()
+        }
+
+        btnMore.setOnClickListener {
+            // 处理更多选项
+            Toast.makeText(this, "更多选项", Toast.LENGTH_SHORT).show()
+        }
+
+        btnFinish.setOnClickListener {
+            // 处理完成操作
+            finish()
+        }
+
+        btnShoot.setOnClickListener {
+            // 处理拍摄操作
+            takePhoto()
+        }
+
+        btnBurst.setOnClickListener {
+            // 处理连拍计数
+            burstCount = if (burstCount >= 3) 1 else burstCount + 1
+            btnBurst.text = "连拍 $burstCount"
+        }
+
+        seekBarIndicator.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                // 暂时不需要处理进度变化
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
     }
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
-            cameraProvider = cameraProviderFuture.get() // 赋值
-            bindCameraUseCases() // 绑定相机
+            cameraProvider = cameraProviderFuture.get()
+            bindCameraUseCases()
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -80,7 +135,7 @@ class CaptureActivity : AppCompatActivity() {
 
     private fun switchCamera() {
         isUsingBackCamera = !isUsingBackCamera
-        bindCameraUseCases() // 重新绑定相机
+        bindCameraUseCases()
     }
 
     private fun takePhoto() {
@@ -89,7 +144,6 @@ class CaptureActivity : AppCompatActivity() {
             return
         }
 
-        // 限制最多 2000 张
         val projectDir = File(getExternalFilesDir(null), "projects/当前项目名")
         if (!projectDir.exists()) projectDir.mkdirs()
 
@@ -99,9 +153,7 @@ class CaptureActivity : AppCompatActivity() {
             return
         }
 
-        // 生成文件名
         val photoFile = File(projectDir, "photo_${System.currentTimeMillis()}.jpg")
-
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
         imageCapture?.takePicture(outputOptions, ContextCompat.getMainExecutor(this),
@@ -121,7 +173,6 @@ class CaptureActivity : AppCompatActivity() {
                 }
             })
     }
-
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
         ContextCompat.checkSelfPermission(baseContext, it) == PackageManager.PERMISSION_GRANTED
