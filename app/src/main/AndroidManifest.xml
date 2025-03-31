@@ -27,13 +27,13 @@
         </activity>
         <activity
             android:name=".CaptureActivity"
-            android:exported="true"
-            android:screenOrientation="landscape">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".PreviewActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/Theme.AppCompat.NoActionBar" />
 
         <activity
             android:name=".EditActivity"

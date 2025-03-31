@@ -30,7 +30,8 @@
             android:layout_height="28dp"
             android:layout_gravity="center"
             android:background="@android:color/transparent"
-            android:src="@drawable/ic_back"/>
+            android:src="@drawable/ic_back"
+            android:layout_marginTop="20dp"/>
 
         <!-- 撤销按钮 -->
         <TextView
@@ -42,7 +43,7 @@
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:padding="8dp"
-            android:layout_marginTop="32dp"/>
+            android:layout_marginTop="20dp"/>
 
         <!-- 竖直滑块 -->
         <SeekBar
@@ -50,7 +51,7 @@
             android:layout_width="150dp"
             android:layout_height="wrap_content"
             android:rotation="270"
-            android:layout_marginTop="32dp"
+            android:layout_marginTop="50dp"
             android:layout_marginBottom="32dp"
             android:max="100"
             android:progress="0"
@@ -65,6 +66,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
+            android:layout_marginTop="30dp"
             android:text="..."
             android:textColor="#FFFFFF"
             android:textSize="20sp"
@@ -86,36 +88,23 @@
     <!-- 右侧工具栏 -->
     <LinearLayout
         android:layout_width="80dp"
-        android:layout_height="match_parent"
+        android:layout_height="wrap_content"
         android:layout_alignParentEnd="true"
         android:orientation="vertical"
-        android:gravity="center_vertical"
-        android:background="#80000000"
-        android:padding="8dp">
+        android:padding="8dp"
+        android:gravity="center"
+        android:background="#80000000">
 
         <!-- 完成按钮 -->
         <TextView
-            android:id="@+id/btnFinish"
+            android:id="@+id/btnDone"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:text="完成"
             android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:padding="8dp"/>
-
-        <!-- 拍摄按钮 -->
-        <TextView
-            android:id="@+id/btnShoot"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:text="拍摄"
-            android:textColor="#FFFFFF"
             android:textSize="20sp"
-            android:padding="16dp"
-            android:layout_marginTop="32dp"
-            android:layout_marginBottom="32dp" />
+            android:padding="8dp"/>
 
         <!-- 连拍按钮 -->
         <TextView
@@ -123,9 +112,52 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
+            android:layout_marginTop="20dp"
             android:text="连拍 1"
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:padding="8dp"/>
+
+        <!-- 拍摄按钮 -->
+        <TextView
+            android:id="@+id/btnCapture"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="20dp"
+            android:text="拍摄"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:padding="16dp"/>
+
+        <!-- 延时按钮 -->
+        <TextView
+            android:id="@+id/btnTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="20dp"
+            android:text="延时"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:padding="8dp"/>
+
+        <!-- 预览区域 -->
+        <FrameLayout
+            android:id="@+id/previewContainer"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginTop="20dp"
+            android:background="@android:color/black">
+
+            <ImageView
+                android:id="@+id/ivPreview"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:contentDescription="预览图片" />
+
+        </FrameLayout>
+
     </LinearLayout>
 </RelativeLayout>
