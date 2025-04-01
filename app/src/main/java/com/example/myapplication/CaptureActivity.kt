@@ -3,6 +3,7 @@ package com.example.myapplication
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -10,6 +11,7 @@ import android.util.Log
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -32,6 +34,12 @@ class CaptureActivity : AppCompatActivity() {
     private var lastCapturedPhoto: File? = null
     private var isUsingBackCamera = true
     private var projectName = "当前项目名" // 添加项目名称变量
+    private var isFlashing = false
+    private var isTimerRunning = false  // 是否正在延时拍摄
+    private var selectedInterval = 0L    // 选择的时间间隔（毫秒）
+    private var photoCount = 0           // 拍摄计数
+    private var timerHandler = Handler(Looper.getMainLooper())
+    private var timerRunnable: Runnable? = null
 
     // UI 组件
     private lateinit var previewView: PreviewView
@@ -47,9 +55,24 @@ class CaptureActivity : AppCompatActivity() {
     private lateinit var previewContainer: FrameLayout
     private lateinit var slider: SeekBar
     private lateinit var countdownText: TextView
+    private lateinit var tvPhotoCount: TextView
 
     private lateinit var cameraProvider: ProcessCameraProvider
     private var camera: Camera? = null
+
+    // 在类的成员变量中添加
+    private lateinit var flashOverlay: View
+    private lateinit var onionSkinView: ImageView
+    private var lastPhotoForOnion: File? = null
+
+    // 添加成员变量
+    private lateinit var moreToolbar: LinearLayout
+    private var isMoreToolbarVisible = false
+    private lateinit var btnFlash: ImageButton
+    private lateinit var btnGrid: ImageButton
+    private lateinit var gridView: View
+    private var isFlashOn = false
+    private var isGridVisible = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -102,6 +125,39 @@ class CaptureActivity : AppCompatActivity() {
         ivPreview = findViewById(R.id.ivPreview)
         previewContainer = findViewById(R.id.previewContainer)
         slider = findViewById(R.id.seekBarIndicator)
+        flashOverlay = findViewById(R.id.flashOverlay)
+        onionSkinView = findViewById(R.id.onionSkinView)
+        tvPhotoCount = TextView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = android.view.Gravity.END or android.view.Gravity.BOTTOM
+                setMargins(0, 0, 8, 8)
+            }
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            text = "0"
+        }
+        previewContainer.addView(tvPhotoCount)
+        
+        // 设置滑块初始值和监听
+        slider.progress = 0
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                // 将进度值(0-100)转换为透明度值(0-1)
+                val alpha = progress / 100f
+                updateOnionSkinAlpha(alpha)
+            }
+            
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        moreToolbar = findViewById(R.id.moreToolbar)
+        btnFlash = findViewById(R.id.btnFlash)
+        btnGrid = findViewById(R.id.btnGrid)
+        gridView = findViewById(R.id.gridView)
     }
 
     private fun setupClickListeners() {
@@ -114,11 +170,11 @@ class CaptureActivity : AppCompatActivity() {
         }
 
         btnUndo.setOnClickListener {
-            Toast.makeText(this, "撤销上一步", Toast.LENGTH_SHORT).show()
+            undoLastPhoto()
         }
 
         btnMore.setOnClickListener {
-            Toast.makeText(this, "更多选项", Toast.LENGTH_SHORT).show()
+            toggleMoreToolbar()
         }
 
         btnDone.setOnClickListener {
@@ -132,14 +188,9 @@ class CaptureActivity : AppCompatActivity() {
         }
 
         btnTimer.setOnClickListener {
-            isTimerMode = !isTimerMode
-            if (isTimerMode) {
-                timerCount = 3
-                startTimer()
-            } else {
-                stopTimer()
+            if (!isTimerRunning) {
+                showIntervalDialog()
             }
-            updateTimerUI()
         }
 
         btnBurst.setOnClickListener {
@@ -149,19 +200,20 @@ class CaptureActivity : AppCompatActivity() {
         }
 
         btnCapture.setOnClickListener {
-            if (isTimerMode) {
-                startTimer()
+            if (selectedInterval > 0) {
+                toggleTimerCapture()
             } else {
-                isBurstMode = burstCount > 1
                 capturePhoto()
             }
         }
 
-        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
+        btnFlash.setOnClickListener {
+            toggleFlash()
+        }
+        
+        btnGrid.setOnClickListener {
+            toggleGrid()
+        }
     }
 
     private fun startTimer() {
@@ -192,7 +244,28 @@ class CaptureActivity : AppCompatActivity() {
     }
 
     private fun updateTimerUI() {
-        btnTimer.text = if (isTimerMode) "延时 3s" else "延时"
+        if (selectedInterval > 0) {
+            val text = when (selectedInterval) {
+                500L -> "0.5s"
+                1000L -> "1s"
+                3000L -> "3s"
+                10000L -> "10s"
+                60000L -> "1m"
+                else -> "延时"
+            }
+            btnTimer.text = text
+            btnTimer.setTextColor(
+                ContextCompat.getColor(this, android.R.color.holo_red_light)
+            )
+            
+            btnCapture.text = ""
+            btnCapture.setBackgroundResource(if (isTimerRunning) R.drawable.ic_play else R.drawable.ic_pause)
+        } else {
+            btnTimer.text = "延时"
+            btnTimer.setTextColor(ContextCompat.getColor(this, android.R.color.white))
+            btnCapture.setBackgroundResource(0)
+            btnCapture.text = "拍摄"
+        }
     }
 
     private fun updateBurstUI() {
@@ -216,11 +289,25 @@ class CaptureActivity : AppCompatActivity() {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
 
-        imageCapture = ImageCapture.Builder().build()
+        imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
 
         try {
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture)
+            camera = cameraProvider.bindToLifecycle(
+                this, 
+                cameraSelector, 
+                preview, 
+                imageCapture
+            )
+            
+            // 添加相机拍摄回调
+            camera?.cameraControl?.enableTorch(false)?.addListener({
+                // 在实际快门动作时闪烁
+                showCaptureFlash()
+            }, ContextCompat.getMainExecutor(this))
+
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed", exc)
         }
@@ -233,12 +320,19 @@ class CaptureActivity : AppCompatActivity() {
             CameraSelector.DEFAULT_BACK_CAMERA
         }
         isUsingBackCamera = !isUsingBackCamera
+        
+        // 切换相机时保持洋葱皮的显示状态
+        val currentAlpha = onionSkinView.alpha
         bindCameraUseCases()
+        onionSkinView.alpha = currentAlpha
     }
 
-    private fun capturePhoto() {
+    private fun capturePhoto(onCaptureComplete: (() -> Unit)? = null) {
         val imageCapture = imageCapture ?: return
-
+        
+        val startTime = System.currentTimeMillis()
+        showCaptureFlash()
+        
         val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
         if (!projectDir.exists()) projectDir.mkdirs()
 
@@ -256,26 +350,29 @@ class CaptureActivity : AppCompatActivity() {
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    val endTime = System.currentTimeMillis()
+                    val captureTime = endTime - startTime
+                    Log.d(TAG, "实际拍摄耗时: ${captureTime}ms")
+                    
                     updatePreviewImage(photoFile)
-                    if (isBurstMode && burstCount > 1) {
-                        burstCount--
-                        updateBurstUI()
-                        if (burstCount > 0) {
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                capturePhoto()
-                            }, 200)
-                        } else {
-                            burstCount = 3
-                            isBurstMode = false
-                            updateBurstUI()
-                        }
-                    }
+                    
+                    // 更新洋葱皮图层
+                    lastPhotoForOnion = photoFile
+                    Glide.with(this@CaptureActivity)
+                        .load(photoFile)
+                        .centerCrop()
+                        .into(onionSkinView)
+                    
+                    photoCount++
+                    tvPhotoCount.text = photoCount.toString()
+                    onCaptureComplete?.invoke()
                 }
 
                 override fun onError(exc: ImageCaptureException) {
                     Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
                     Toast.makeText(baseContext, "拍照失败: ${exc.message}", 
                         Toast.LENGTH_SHORT).show()
+                    onCaptureComplete?.invoke()
                 }
             }
         )
@@ -306,9 +403,184 @@ class CaptureActivity : AppCompatActivity() {
         }
     }
 
+    private fun showCaptureFlash() {
+        if (isFlashing) return
+        isFlashing = true
+        
+        flashOverlay.alpha = 0.8f
+        flashOverlay.visibility = View.VISIBLE
+        
+        flashOverlay.animate()
+            .alpha(0f)
+            .setDuration(30)  // 缩短闪烁时间使效果更明显
+            .withEndAction {
+                flashOverlay.visibility = View.GONE
+                isFlashing = false
+            }
+            .start()
+    }
+
+    private fun showIntervalDialog() {
+        val intervals = arrayOf("关闭延时", "0.5秒", "1秒", "3秒", "10秒", "1分钟")
+        val intervalValues = arrayOf(0L, 500L, 1000L, 3000L, 10000L, 60000L)
+        
+        AlertDialog.Builder(this)
+            .setTitle("选择时间间隔")
+            .setItems(intervals) { _, which ->
+                selectedInterval = intervalValues[which]
+                if (isTimerRunning) {
+                    stopTimerCapture()  // 如果正在拍摄，停止拍摄
+                }
+                updateTimerUI()
+            }
+            .show()
+    }
+
+    private fun toggleTimerCapture() {
+        if (isTimerRunning) {
+            stopTimerCapture()
+        } else {
+            startTimerCapture()
+        }
+    }
+
+    private fun startTimerCapture() {
+        isTimerRunning = true
+        updateTimerUI()
+        updateButtonsState(false)  // 禁用其他按钮
+        
+        var lastCaptureTime = System.currentTimeMillis()
+        
+        timerRunnable = object : Runnable {
+            override fun run() {
+                val currentTime = System.currentTimeMillis()
+                val elapsedTime = currentTime - lastCaptureTime
+                
+                if (elapsedTime >= selectedInterval) {
+                    capturePhoto()
+                    lastCaptureTime = currentTime
+                    
+                    // 计算下一次拍摄的延迟时间
+                    val nextDelay = if (selectedInterval <= 100) {
+                        // 对于0.1秒的情况，尽可能快地进行下一次拍摄
+                        0
+                    } else {
+                        // 对于其他间隔，正常延迟
+                        selectedInterval
+                    }
+                    timerHandler.postDelayed(this, nextDelay)
+                } else {
+                    // 如果还没到间隔时间，继续等待
+                    timerHandler.postDelayed(this, 1)
+                }
+            }
+        }
+        timerHandler.post(timerRunnable!!)
+    }
+
+    private fun stopTimerCapture() {
+        isTimerRunning = false
+        timerRunnable?.let { timerHandler.removeCallbacks(it) }
+        updateTimerUI()
+        updateButtonsState(true)  // 重新启用其他按钮
+    }
+
+    private fun updateButtonsState(enabled: Boolean) {
+        btnBack.isEnabled = enabled
+        btnUndo.isEnabled = enabled
+        btnMore.isEnabled = enabled
+        btnDone.isEnabled = enabled
+        btnBurst.isEnabled = enabled
+        btnTimer.isEnabled = enabled
+        btnSwitch.isEnabled = enabled
+    }
+
+    private fun undoLastPhoto() {
+        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+        val photoFiles = projectDir.listFiles()
+            ?.filter { it.extension == "jpg" }
+            ?.sortedBy { it.lastModified() }
+            ?: return
+
+        if (photoFiles.isEmpty()) return
+
+        // 获取最后一张照片
+        val lastPhoto = photoFiles.last()
+        
+        // 删除最后一张照片
+        if (lastPhoto.delete()) {
+            photoCount--
+            tvPhotoCount.text = photoCount.toString()
+            
+            // 更新预览图和洋葱皮
+            if (photoFiles.size > 1) {
+                val previousPhoto = photoFiles[photoFiles.size - 2]
+                updatePreviewImage(previousPhoto)
+                // 更新洋葱皮为倒数第二张照片
+                lastPhotoForOnion = previousPhoto
+                Glide.with(this)
+                    .load(previousPhoto)
+                    .centerCrop()
+                    .into(onionSkinView)
+            } else {
+                // 如果是最后一张，清空预览和洋葱皮
+                lastCapturedPhoto = null
+                lastPhotoForOnion = null
+                ivPreview.setImageDrawable(null)
+                onionSkinView.setImageDrawable(null)
+            }
+        }
+    }
+
+    private fun updateOnionSkinAlpha(alpha: Float) {
+        if (lastPhotoForOnion != null) {
+            onionSkinView.alpha = alpha
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        stopTimerCapture()
         cameraExecutor.shutdown()
+    }
+
+    // 添加切换更多工具框的函数
+    private fun toggleMoreToolbar() {
+        if (isMoreToolbarVisible) {
+            // 淡出动画
+            moreToolbar.animate()
+                .alpha(0f)
+                .setDuration(300)
+                .withEndAction {
+                    moreToolbar.visibility = View.GONE
+                }
+                .start()
+        } else {
+            // 淡入动画
+            moreToolbar.visibility = View.VISIBLE
+            moreToolbar.alpha = 0f
+            moreToolbar.animate()
+                .alpha(1f)
+                .setDuration(300)
+                .start()
+        }
+        isMoreToolbarVisible = !isMoreToolbarVisible
+    }
+
+    // 添加闪光灯控制函数
+    private fun toggleFlash() {
+        isFlashOn = !isFlashOn
+        camera?.cameraControl?.enableTorch(isFlashOn)
+        btnFlash.setImageResource(
+            if (isFlashOn) R.drawable.ic_flash_on
+            else R.drawable.ic_flash_off
+        )
+    }
+
+    // 添加参考线控制函数
+    private fun toggleGrid() {
+        isGridVisible = !isGridVisible
+        gridView.visibility = if (isGridVisible) View.VISIBLE else View.GONE
     }
 
     companion object {
