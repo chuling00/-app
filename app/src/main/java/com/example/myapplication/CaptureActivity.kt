@@ -1,9 +1,11 @@
 package com.example.myapplication
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +13,7 @@ import android.util.Log
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -21,6 +24,8 @@ import com.bumptech.glide.Glide
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 class CaptureActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -74,6 +79,10 @@ class CaptureActivity : AppCompatActivity() {
     private var isFlashOn = false
     private var isGridVisible = false
 
+    // 在类的成员变量区域修改声明
+    private val photoFiles = ArrayList<File>()
+
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_capture)
@@ -160,6 +169,7 @@ class CaptureActivity : AppCompatActivity() {
         gridView = findViewById(R.id.gridView)
     }
 
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private fun setupClickListeners() {
         btnBack.setOnClickListener {
             finish()
@@ -178,7 +188,7 @@ class CaptureActivity : AppCompatActivity() {
         }
 
         btnDone.setOnClickListener {
-            finish()
+            showCreateProjectDialog()
         }
 
         previewContainer.setOnClickListener {
@@ -336,8 +346,8 @@ class CaptureActivity : AppCompatActivity() {
         val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
         if (!projectDir.exists()) projectDir.mkdirs()
 
-        val photoFiles = projectDir.listFiles()?.filter { it.extension == "jpg" } ?: emptyList()
-        if (photoFiles.size >= 2000) {
+        val existingFiles = projectDir.listFiles()?.filter { it.extension == "jpg" } ?: emptyList()
+        if (existingFiles.size >= 2000) {
             Toast.makeText(this, "已达到最大拍摄数量 2000 张！", Toast.LENGTH_SHORT).show()
             return
         }
@@ -354,9 +364,9 @@ class CaptureActivity : AppCompatActivity() {
                     val captureTime = endTime - startTime
                     Log.d(TAG, "实际拍摄耗时: ${captureTime}ms")
                     
-                    updatePreviewImage(photoFile)
+                    this@CaptureActivity.photoFiles.add(photoFile)
                     
-                    // 更新洋葱皮图层
+                    updatePreviewImage(photoFile)
                     lastPhotoForOnion = photoFile
                     Glide.with(this@CaptureActivity)
                         .load(photoFile)
@@ -495,35 +505,25 @@ class CaptureActivity : AppCompatActivity() {
         btnSwitch.isEnabled = enabled
     }
 
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private fun undoLastPhoto() {
-        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
-        val photoFiles = projectDir.listFiles()
-            ?.filter { it.extension == "jpg" }
-            ?.sortedBy { it.lastModified() }
-            ?: return
-
         if (photoFiles.isEmpty()) return
 
-        // 获取最后一张照片
         val lastPhoto = photoFiles.last()
-        
-        // 删除最后一张照片
         if (lastPhoto.delete()) {
+            photoFiles.removeLast()  // 从列表中移除
             photoCount--
             tvPhotoCount.text = photoCount.toString()
             
-            // 更新预览图和洋葱皮
-            if (photoFiles.size > 1) {
-                val previousPhoto = photoFiles[photoFiles.size - 2]
+            if (photoFiles.isNotEmpty()) {
+                val previousPhoto = photoFiles.last()
                 updatePreviewImage(previousPhoto)
-                // 更新洋葱皮为倒数第二张照片
                 lastPhotoForOnion = previousPhoto
                 Glide.with(this)
                     .load(previousPhoto)
                     .centerCrop()
                     .into(onionSkinView)
             } else {
-                // 如果是最后一张，清空预览和洋葱皮
                 lastCapturedPhoto = null
                 lastPhotoForOnion = null
                 ivPreview.setImageDrawable(null)
@@ -581,6 +581,62 @@ class CaptureActivity : AppCompatActivity() {
     private fun toggleGrid() {
         isGridVisible = !isGridVisible
         gridView.visibility = if (isGridVisible) View.VISIBLE else View.GONE
+    }
+
+    private fun showCreateProjectDialog() {
+        val editText = EditText(this).apply {
+            hint = "请输入项目名称"
+            setPadding(50, 30, 50, 30)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("创建新项目")
+            .setView(editText)
+            .setPositiveButton("确定") { _, _ ->
+                val projectName = editText.text.toString().trim()
+                if (projectName.isNotEmpty()) {
+                    createProject(projectName)
+                } else {
+                    Toast.makeText(this, "项目名称不能为空", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun createProject(projectName: String) {
+        // 创建项目目录
+        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+        if (!projectDir.exists()) {
+            projectDir.mkdirs()
+        }
+
+        // 移动所有已拍摄的照片到项目目录
+        photoFiles.forEachIndexed { index, photoFile ->
+            val newFile = File(projectDir, "photo_${index + 1}.jpg")
+            photoFile.renameTo(newFile)
+        }
+
+        // 保存项目信息
+        saveProjectInfo(projectName, System.currentTimeMillis())
+
+        // 返回主页
+        finish()
+    }
+
+    private fun saveProjectInfo(projectName: String, createTime: Long) {
+        val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+        val projectsJson = sharedPrefs.getString("project_list", "[]")
+        val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+            projectsJson,
+            object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+        )
+
+        // 添加新项目信息
+        projectsList.add(0, ProjectInfo(projectName, createTime))  // 添加到列表开头
+
+        // 保存更新后的项目列表
+        sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
     }
 
     companion object {
