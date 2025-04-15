@@ -72,6 +72,15 @@
             android:background="@android:color/transparent"
             android:src="@drawable/ic_play"
             android:scaleType="fitCenter"/>
+
+        <ImageButton
+            android:id="@+id/btnDelete"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginTop="24dp"
+            android:background="@android:color/transparent"
+            android:src="@drawable/ic_delete"
+            android:scaleType="fitCenter"/>
     </LinearLayout>
 
     <!-- 主预览区域 -->

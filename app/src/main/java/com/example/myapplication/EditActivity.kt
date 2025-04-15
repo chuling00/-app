@@ -19,6 +19,13 @@ import android.graphics.Color
 import android.content.Context
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.os.Handler
+import android.os.Looper
+import android.content.Intent
+import android.app.AlertDialog
+import java.io.File
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 class EditActivity : AppCompatActivity() {
     private lateinit var mainImageView: ImageView
@@ -30,6 +37,12 @@ class EditActivity : AppCompatActivity() {
     private lateinit var btnPlay: ImageButton
     private lateinit var previewAdapter: PreviewAdapter
     private var photoPaths: List<String> = emptyList()
+    private var currentFps = 30 // 默认帧率
+    private var currentPhotoIndex = 0 // 当前选中的照片索引
+    private val handler = Handler(Looper.getMainLooper())
+    private var isPlaying = false
+    private lateinit var projectName: String
+    private lateinit var btnDelete: ImageButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,7 +56,7 @@ class EditActivity : AppCompatActivity() {
 
         // 获取传递的照片路径和项目名
         photoPaths = intent.getStringArrayListExtra("PHOTO_PATHS") ?: emptyList()
-        val projectName = intent.getStringExtra("PROJECT_NAME") ?: ""
+        projectName = intent.getStringExtra("PROJECT_NAME") ?: ""
 
         initializeViews()
         setupPhotoList()
@@ -58,6 +71,7 @@ class EditActivity : AppCompatActivity() {
         btnCapture = findViewById(R.id.btnCapture)
         btnFrameRate = findViewById(R.id.btnFrameRate)
         btnPlay = findViewById(R.id.btnPlay)
+        btnDelete = findViewById(R.id.btnDelete)
         
         // 初始化RecyclerView
         photoListLayout.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
@@ -110,20 +124,132 @@ class EditActivity : AppCompatActivity() {
         }
 
         btnDone.setOnClickListener {
-            // 处理完成按钮点击
+            finish()
         }
 
         btnCapture.setOnClickListener {
-            // 处理拍摄按钮点击
+            val intent = Intent(this, CaptureActivity::class.java)
+            intent.putExtra("PROJECT_NAME", projectName)
+            intent.putExtra("INSERT_POSITION", currentPhotoIndex + 1)
+            startActivity(intent)
         }
 
         btnFrameRate.setOnClickListener {
-            // 处理帧率设置按钮点击
+            showFrameRateDialog()
         }
 
         btnPlay.setOnClickListener {
-            // 处理播放按钮点击
+            if (!isPlaying) {
+                startPlayback()
+            }
         }
+
+        btnDelete.setOnClickListener {
+            deleteCurrentPhoto()
+        }
+    }
+
+    private fun showFrameRateDialog() {
+        val frameRates = arrayOf("1fps", "5fps", "10fps", "15fps", "20fps", "30fps")
+        val frameRateValues = arrayOf(1, 5, 10, 15, 20, 30)
+
+        AlertDialog.Builder(this)
+            .setTitle("选择帧率")
+            .setItems(frameRates) { _, which ->
+                currentFps = frameRateValues[which]
+            }
+            .show()
+    }
+
+    private fun startPlayback() {
+        if (photoPaths.isEmpty()) return
+        isPlaying = true
+        currentPhotoIndex = 0
+
+        val frameDelay = 1000L / currentFps
+        
+        val playbackRunnable = object : Runnable {
+            override fun run() {
+                if (currentPhotoIndex < photoPaths.size) {
+                    Glide.with(this@EditActivity)
+                        .load(photoPaths[currentPhotoIndex])
+                        .fitCenter()
+                        .into(mainImageView)
+
+                    previewAdapter.setSelectedPosition(currentPhotoIndex)
+
+                    currentPhotoIndex++
+                    if (currentPhotoIndex < photoPaths.size) {
+                        handler.postDelayed(this, frameDelay)
+                    } else {
+                        isPlaying = false
+                    }
+                }
+            }
+        }
+
+        handler.post(playbackRunnable)
+    }
+
+    private fun deleteCurrentPhoto() {
+        if (photoPaths.isEmpty() || currentPhotoIndex >= photoPaths.size) return
+
+        // 删除当前照片文件
+        val currentPhotoFile = File(photoPaths[currentPhotoIndex])
+        currentPhotoFile.delete()
+
+        // 从列表中移除
+        val mutablePaths = photoPaths.toMutableList()
+        mutablePaths.removeAt(currentPhotoIndex)
+        photoPaths = mutablePaths
+
+        if (photoPaths.isEmpty()) {
+            // 如果没有照片了，删除项目并返回
+            deleteProject(projectName)
+            finish()
+            return
+        }
+
+        // 更新当前索引
+        if (currentPhotoIndex >= photoPaths.size) {
+            currentPhotoIndex = photoPaths.size - 1
+        }
+
+        // 更新预览
+        updatePreview()
+        previewAdapter.updatePhotos(photoPaths)
+    }
+
+    private fun updatePreview() {
+        if (currentPhotoIndex >= 0 && currentPhotoIndex < photoPaths.size) {
+            Glide.with(this)
+                .load(photoPaths[currentPhotoIndex])
+                .fitCenter()
+                .into(mainImageView)
+            previewAdapter.setSelectedPosition(currentPhotoIndex)
+        }
+    }
+
+    private fun deleteProject(projectName: String) {
+        // 删除项目文件夹
+        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+        projectDir.deleteRecursively()
+
+        // 从 SharedPreferences 中移除项目信息
+        val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+        val projectsJson = sharedPrefs.getString("project_list", "[]")
+        val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+            projectsJson,
+            object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+        )
+
+        projectsList.removeAll { it.name == projectName }
+        sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
     }
 
     fun loadCorrectedImage(imageView: ImageView, path: String) {

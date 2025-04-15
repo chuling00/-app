@@ -8,6 +8,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.bumptech.glide.Glide
 import com.google.gson.Gson
@@ -27,12 +28,7 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(this, CaptureActivity::class.java)
             startActivity(intent)
         }
-
-        // 点击项目区域跳转到后期制作界面
-        val projectLayout = findViewById<LinearLayout>(R.id.item_project_layout)
-        projectLayout.setOnClickListener {
-            openEditActivity("当前项目名")
-        }
+        
     }
 
     private fun openEditActivity(projectName: String) {
@@ -108,8 +104,41 @@ class MainActivity : AppCompatActivity() {
                 startActivity(intent)
             }
 
+            // 添加长按删除功能
+            projectView.setOnLongClickListener {
+                AlertDialog.Builder(this)
+                    .setTitle("删除项目")
+                    .setMessage("确定要删除这个项目吗？")
+                    .setPositiveButton("删除") { _, _ ->
+                        deleteProject(project.name)
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                true
+            }
+
             projectContainer.addView(projectView, 0)  // 添加到容器开头
         }
+    }
+
+    private fun deleteProject(projectName: String) {
+        // 删除项目文件夹
+        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+        projectDir.deleteRecursively()
+
+        // 从 SharedPreferences 中移除项目信息
+        val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+        val projectsJson = sharedPrefs.getString("project_list", "[]")
+        val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+            projectsJson,
+            object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+        )
+
+        projectsList.removeAll { it.name == projectName }
+        sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
+
+        // 刷新界面
+        loadProjects()
     }
 
     override fun onResume() {

@@ -31,43 +31,6 @@
                 android:text="进入拍摄界面" />
         </RelativeLayout>
 
-        <LinearLayout
-            android:id="@+id/item_project_layout"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#222"
-            android:orientation="vertical"
-            android:padding="8dp">
-
-            <!-- 缩略图/预览图 -->
-            <ImageView
-                android:id="@+id/iv_project_thumb"
-                android:layout_width="match_parent"
-                android:layout_height="120dp"
-                android:background="#444"
-                android:scaleType="centerCrop" />
-
-            <!-- 项目信息：名称、时长等 -->
-            <TextView
-                android:id="@+id/tv_project_name"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="我的新项目"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/tv_project_duration"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="总时长：00:00"
-                android:textColor="#BBBBBB"
-                android:textSize="12sp" />
-
-
-        </LinearLayout>
-
         <!-- 项目列表容器 -->
         <ScrollView
             android:layout_width="match_parent"
