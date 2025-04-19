@@ -1,6 +1,5 @@
 package com.example.myapplication
 
-import ProjectAdapter
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -15,6 +14,12 @@ import com.bumptech.glide.Glide
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
+import com.bumptech.glide.load.DataSource
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.load.engine.GlideException
+import com.bumptech.glide.request.RequestListener
+import com.bumptech.glide.request.target.Target
+import android.graphics.drawable.Drawable
 
 class MainActivity : AppCompatActivity() {
 

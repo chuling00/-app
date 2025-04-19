@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +23,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import com.bumptech.glide.Glide
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import com.google.gson.Gson
@@ -82,7 +84,6 @@ class CaptureActivity : AppCompatActivity() {
     // 在类的成员变量区域修改声明
     private val photoFiles = ArrayList<File>()
 
-    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_capture)
@@ -169,7 +170,6 @@ class CaptureActivity : AppCompatActivity() {
         gridView = findViewById(R.id.gridView)
     }
 
-    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private fun setupClickListeners() {
         btnBack.setOnClickListener {
             finish()
@@ -505,7 +505,6 @@ class CaptureActivity : AppCompatActivity() {
         btnSwitch.isEnabled = enabled
     }
 
-    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private fun undoLastPhoto() {
         if (photoFiles.isEmpty()) return
 
@@ -637,6 +636,27 @@ class CaptureActivity : AppCompatActivity() {
 
         // 保存更新后的项目列表
         sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
+    }
+
+    private fun saveOptimizedPhoto(bitmap: Bitmap, outputFile: File) {
+        // 计算合适的图片尺寸（例如，限制最大宽度为1920像素）
+        val maxWidth = 1920
+        val scale = maxWidth.toFloat() / bitmap.width
+        val newWidth = (bitmap.width * scale).toInt()
+        val newHeight = (bitmap.height * scale).toInt()
+
+        // 压缩图片
+        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        
+        // 使用较低的质量保存JPEG
+        FileOutputStream(outputFile).use { out ->
+            resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+        }
+        
+        // 回收不需要的Bitmap
+        if (resizedBitmap != bitmap) {
+            resizedBitmap.recycle()
+        }
     }
 
     companion object {

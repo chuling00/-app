@@ -80,18 +80,40 @@
             android:background="@null"
             android:src="@drawable/ic_delete"
             android:layout_marginTop="8dp"/>
+
+        <ImageButton
+            android:id="@+id/btnExport"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_export"
+            android:layout_below="@id/btnDelete"
+            android:layout_marginTop="16dp"/>
     </LinearLayout>
 
     <!-- 主预览区域 -->
-    <ImageView
-        android:id="@+id/mainImageView"
+    <FrameLayout
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:scaleType="fitCenter"
         app:layout_constraintStart_toEndOf="@id/leftToolbar"
         app:layout_constraintEnd_toStartOf="@id/rightToolbar"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/photoListLayout"/>
+        app:layout_constraintBottom_toTopOf="@id/photoListLayout">
+
+        <ImageView
+            android:id="@+id/mainImageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"/>
+
+        <ImageView
+            android:id="@+id/bufferImageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:visibility="invisible"/>
+
+    </FrameLayout>
 
     <!-- 底部预览区域 -->
     <androidx.recyclerview.widget.RecyclerView
