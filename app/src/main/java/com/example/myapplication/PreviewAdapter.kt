@@ -68,4 +68,11 @@ class PreviewAdapter(
         photoPaths = newPhotos
         notifyDataSetChanged()
     }
+
+    fun setSelectedPosition(position: Int) {
+        val previousSelected = selectedPosition
+        selectedPosition = position
+        notifyItemChanged(previousSelected)
+        notifyItemChanged(selectedPosition)
+    }
 } 

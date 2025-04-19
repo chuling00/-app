@@ -1,5 +1,6 @@
 package com.example.myapplication
 
+import ProjectAdapter
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -8,6 +9,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.bumptech.glide.Glide
 import com.google.gson.Gson
@@ -27,12 +29,7 @@ class MainActivity : AppCompatActivity() {
             val intent = Intent(this, CaptureActivity::class.java)
             startActivity(intent)
         }
-
-        // 点击项目区域跳转到后期制作界面
-        val projectLayout = findViewById<LinearLayout>(R.id.item_project_layout)
-        projectLayout.setOnClickListener {
-            openEditActivity("当前项目名")
-        }
+        
     }
 
     private fun openEditActivity(projectName: String) {
@@ -54,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         // 跳转到 EditActivity 并传递照片路径
         val intent = Intent(this, EditActivity::class.java)
         intent.putStringArrayListExtra("PHOTO_PATHS", ArrayList(photoPaths))
+        intent.putExtra("PROJECT_NAME", projectName)
         startActivity(intent)
     }
 
@@ -80,7 +78,7 @@ class MainActivity : AppCompatActivity() {
             if (firstPhoto != null) {
                 Glide.with(this)
                     .load(firstPhoto)
-                    .fitCenter()  // 保持原比例
+                    .fitCenter()
                     .into(imageView)
             }
 
@@ -93,9 +91,23 @@ class MainActivity : AppCompatActivity() {
 
             // 设置点击事件
             projectView.setOnClickListener {
+                // 获取项目中的所有照片路径
+                val photoPaths = projectDir.listFiles()
+                    ?.filter { it.extension == "jpg" }
+                    ?.map { it.absolutePath }
+                    ?: emptyList()
+
+                // 跳转到 EditActivity 并传递照片路径
                 val intent = Intent(this, EditActivity::class.java)
+                intent.putStringArrayListExtra("PHOTO_PATHS", ArrayList(photoPaths))
                 intent.putExtra("PROJECT_NAME", project.name)
                 startActivity(intent)
+            }
+
+            // 添加长按删除功能
+            projectView.setOnLongClickListener {
+                showDeleteProjectDialog(project.name)
+                true
             }
 
             projectContainer.addView(projectView, 0)  // 添加到容器开头
@@ -105,5 +117,40 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         loadProjects()  // 每次返回主页时刷新项目列表
+    }
+
+    private fun showDeleteProjectDialog(projectName: String) {
+        AlertDialog.Builder(this)
+            .setTitle("删除项目")
+            .setMessage("确定要删除项目吗？此操作不可恢复。")
+            .setPositiveButton("删除") { _, _ ->
+                deleteProject(projectName)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun deleteProject(projectName: String) {
+        // 删除项目文件夹
+        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+        if (projectDir.exists()) {
+            projectDir.deleteRecursively()
+        }
+
+        // 从SharedPreferences中移除项目信息
+        val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+        val projectsJson = sharedPrefs.getString("project_list", "[]")
+        val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+            projectsJson,
+            object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+        )
+        
+        projectsList.removeAll { it.name == projectName }
+        
+        // 保存更新后的项目列表
+        sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
+        
+        // 刷新项目列表显示
+        loadProjects()
     }
 }
