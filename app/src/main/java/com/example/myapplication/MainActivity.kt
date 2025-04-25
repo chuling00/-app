@@ -14,12 +14,9 @@ import com.bumptech.glide.Glide
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
-import com.bumptech.glide.load.DataSource
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.bumptech.glide.load.engine.GlideException
-import com.bumptech.glide.request.RequestListener
-import com.bumptech.glide.request.target.Target
-import android.graphics.drawable.Drawable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -28,36 +25,16 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
+        // 清理所有临时目录
+        cleanupTemporaryDirectories()
+
         // 点击拍摄按钮跳转到拍摄界面
         val captureButton = findViewById<Button>(R.id.captureButton)
         captureButton.setOnClickListener {
             val intent = Intent(this, CaptureActivity::class.java)
             startActivity(intent)
         }
-        
-    }
 
-    private fun openEditActivity(projectName: String) {
-        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
-        if (!projectDir.exists()) {
-            return
-        }
-
-        // 获取项目中的所有照片路径
-        val photoPaths = projectDir.listFiles()
-            ?.filter { it.extension == "jpg" }
-            ?.map { it.absolutePath }
-            ?: emptyList()
-
-        if (photoPaths.isEmpty()) {
-            return
-        }
-
-        // 跳转到 EditActivity 并传递照片路径
-        val intent = Intent(this, EditActivity::class.java)
-        intent.putStringArrayListExtra("PHOTO_PATHS", ArrayList(photoPaths))
-        intent.putExtra("PROJECT_NAME", projectName)
-        startActivity(intent)
     }
 
     private fun loadProjects() {
@@ -157,5 +134,21 @@ class MainActivity : AppCompatActivity() {
         
         // 刷新项目列表显示
         loadProjects()
+    }
+
+    private fun cleanupTemporaryDirectories() {
+        CoroutineScope(Dispatchers.IO).launch {
+            // 清理临时拍摄目录
+            val tempDir = File(getExternalFilesDir(null), "temp")
+            if (tempDir.exists()) {
+                tempDir.listFiles()?.forEach { it.delete() }
+            }
+            
+            // 清理临时插入目录
+            val insertTempDir = File(getExternalFilesDir(null), "insert_temp")
+            if (insertTempDir.exists()) {
+                insertTempDir.listFiles()?.forEach { it.delete() }
+            }
+        }
     }
 }

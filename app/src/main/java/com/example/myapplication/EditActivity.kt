@@ -171,18 +171,27 @@ class EditActivity : AppCompatActivity() {
 
     private fun setupClickListeners() {
         btnBack.setOnClickListener {
-            finish()
+            // 取消所有更改
+            showDiscardChangesDialog()
         }
 
         btnDone.setOnClickListener {
-            finish()
+            // 保存所有更改
+            saveProjectChanges()
         }
 
         btnCapture.setOnClickListener {
+            // 确保有选中的照片
+            if (photoPaths.isEmpty()) {
+                Toast.makeText(this, "项目中没有照片", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
             val intent = Intent(this, CaptureActivity::class.java)
             intent.putExtra("PROJECT_NAME", projectName)
-            intent.putExtra("INSERT_POSITION", currentPhotoIndex + 1)
-            startActivity(intent)
+            intent.putExtra("INSERT_POSITION", currentPhotoIndex)
+            intent.putExtra("SELECTED_PHOTO_PATH", photoPaths[currentPhotoIndex])
+            startActivityForResult(intent, REQUEST_CAPTURE)
         }
 
         btnFrameRate.setOnClickListener {
@@ -319,20 +328,25 @@ class EditActivity : AppCompatActivity() {
         // 从缓存中获取预加载的图片
         val cachedBitmap = bitmapCache.get(currentPlaybackIndex)
         if (cachedBitmap != null) {
-            nextView.setImageBitmap(cachedBitmap)
-            switchViews(currentView!!, nextView)
-            
-            // 更新预览区域的选中状态
-            previewAdapter.setSelectedPosition(currentPlaybackIndex)
-            photoListLayout.scrollToPosition(currentPlaybackIndex)
-            
-            currentPlaybackIndex++
-            
-            // 使用postDelayed确保固定的帧间隔
-            val frameDelay = (1000.0 / currentFps).toLong()
-            handler.postDelayed({ playNextFrame() }, frameDelay)
+            // 在新线程中准备下一帧
+            CoroutineScope(Dispatchers.Main).launch {
+                nextView.setImageBitmap(cachedBitmap)
+                switchViews(currentView!!, nextView)
+                
+                // 更新预览区域的选中状态
+                previewAdapter.setSelectedPosition(currentPlaybackIndex)
+                photoListLayout.scrollToPosition(currentPlaybackIndex)
+                
+                currentPlaybackIndex++
+                
+                // 使用更精确的延迟计时
+                val frameDelay = (1000.0 / currentFps).toLong()
+                withContext(Dispatchers.Default) {
+                    delay(frameDelay)
+                }
+                playNextFrame()
+            }
         } else {
-            // 如果缓存中没有找到图片，停止播放
             isPlaying = false
             btnPlay.setImageResource(R.drawable.ic_play)
             Toast.makeText(this, "播放出错，请重试", Toast.LENGTH_SHORT).show()
@@ -340,19 +354,9 @@ class EditActivity : AppCompatActivity() {
     }
 
     private fun switchViews(oldView: ImageView, newView: ImageView) {
-        // 使用交叉淡入淡出效果
-        newView.alpha = 0f
+        newView.alpha = 1f  // 直接设置透明度为1
         newView.visibility = View.VISIBLE
-        
-        newView.animate()
-            .alpha(1f)
-            .setDuration(50) // 50ms的过渡时间
-            .withEndAction {
-                oldView.visibility = View.INVISIBLE
-                oldView.alpha = 1f
-            }
-            .start()
-            
+        oldView.visibility = View.INVISIBLE
         currentDisplayView = newView
     }
 
@@ -369,10 +373,6 @@ class EditActivity : AppCompatActivity() {
 
     private fun deleteCurrentPhoto() {
         if (currentPhotoIndex >= photoPaths.size) return
-        
-        // 删除文件
-        val file = File(photoPaths[currentPhotoIndex])
-        file.delete()
         
         // 从列表中移除
         photoPaths.removeAt(currentPhotoIndex)
@@ -491,23 +491,36 @@ class EditActivity : AppCompatActivity() {
 
     private suspend fun exportToVideo(outputFile: File, progressDialog: AlertDialog) {
         withContext(Dispatchers.IO) {
-            val width = 640  // 降低分辨率
+            val width = 640  // 使用更小的分辨率
             val height = 360
-            val bitRate = 1_500_000  // 降低码率
+            val bitRate = 2_000_000
 
             val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-                // 使用更基础的编码配置
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, currentFps)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-                // 使用最基础的Profile
                 setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
                 setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel3)
-                // 强制使用特定的编码器参数
+                
+                // 添加关键配置
+                setInteger("max-width", width)
+                setInteger("max-height", height)
                 setInteger("stride", width)
                 setInteger("slice-height", height)
+            }
+
+            // 获取可用的编码器
+            val codecList = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            val codecInfo = codecList.codecInfo
+            
+            // 检查编码器是否支持当前配置
+            val capabilities = codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            val supported = capabilities.videoCapabilities.isSizeSupported(width, height)
+            
+            if (!supported) {
+                throw Exception("设备不支持该分辨率，请尝试降低分辨率")
             }
 
             val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -645,6 +658,7 @@ class EditActivity : AppCompatActivity() {
             }
         }
     }
+    
 
     override fun onDestroy() {
         super.onDestroy()
@@ -677,7 +691,7 @@ class EditActivity : AppCompatActivity() {
         }
     }
 
-    // 添加完成导出后的文件处理方法
+    // 修改finalizeVideo方法
     private fun finalizeVideo(tempFile: File) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
@@ -686,22 +700,34 @@ class EditActivity : AppCompatActivity() {
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
                     put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES)
                     put(MediaStore.Video.Media.IS_PENDING, 0)
+                    // 添加视频时长信息
+                    put(MediaStore.Video.Media.DURATION, (photoPaths.size * 1000L / currentFps))
                 }
                 
                 val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
                     ?: throw Exception("无法创建视频文件")
                     
-                // 复制临时文件到最终位置
+                // 使用缓冲流复制文件
                 contentResolver.openOutputStream(uri)?.use { outputStream ->
                     tempFile.inputStream().use { inputStream ->
-                        inputStream.copyTo(outputStream)
+                        val buffer = ByteArray(8192)
+                        var bytes = inputStream.read(buffer)
+                        while (bytes >= 0) {
+                            outputStream.write(buffer, 0, bytes)
+                            bytes = inputStream.read(buffer)
+                        }
+                        outputStream.flush()
                     }
                 }
                 
                 // 删除临时文件
                 tempFile.delete()
+                
+                // 通知媒体库更新
+                sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri))
             } catch (e: Exception) {
                 e.printStackTrace()
+                throw e
             }
         }
     }
@@ -709,5 +735,124 @@ class EditActivity : AppCompatActivity() {
     // 添加权限请求常量
     companion object {
         private const val REQUEST_STORAGE_PERMISSION = 1001
+        private const val REQUEST_CAPTURE = 1002  // 添加拍摄请求码
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CAPTURE && resultCode == RESULT_OK) {
+            // 获取新拍摄的所有照片路径
+            val newPhotoPaths = data?.getStringArrayListExtra("NEW_PHOTO_PATHS")
+            if (newPhotoPaths != null && newPhotoPaths.isNotEmpty()) {
+                // 在指定位置插入新照片
+                photoPaths.addAll(currentPhotoIndex + 1, newPhotoPaths)
+                
+                // 更新底部预览列表
+                previewAdapter.notifyDataSetChanged()
+                
+                // 选中新插入的第一张照片
+                currentPhotoIndex++
+                
+                // 更新主预览图
+                Glide.with(this)
+                    .load(newPhotoPaths[0])
+                    .fitCenter()
+                    .into(mainImageView)
+                previewAdapter.setSelectedPosition(currentPhotoIndex)
+                
+                // 清除缓存，以便下次播放时重新加载
+                bitmapCache.evictAll()
+                
+                // 滚动预览区域到新插入的照片位置
+                photoListLayout.scrollToPosition(currentPhotoIndex)
+                
+                // 显示提示信息
+                Toast.makeText(this, "已成功插入 ${newPhotoPaths.size} 张新照片", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // 添加弹出确认对话框的方法
+    private fun showDiscardChangesDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("放弃更改")
+            .setMessage("确定要放弃所有更改吗？")
+            .setPositiveButton("确定") { _, _ ->
+                finish()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // 修改保存项目更改的方法
+    private fun saveProjectChanges() {
+        // 显示保存进度对话框
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("正在保存")
+            .setMessage("正在保存项目更改...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+
+        // 启动协程在后台执行保存操作
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 获取项目目录
+                val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+                if (!projectDir.exists()) {
+                    projectDir.mkdirs()
+                }
+
+                // 先删除项目目录中的所有文件
+                projectDir.listFiles()?.forEach { file ->
+                    file.delete()
+                }
+
+                // 如果没有照片，创建空项目
+                if (photoPaths.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        progressDialog.dismiss()
+                        Toast.makeText(this@EditActivity, "项目保存成功", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
+                    return@launch
+                }
+
+                // 重新按顺序编号并复制所有照片到项目目录
+                val newPhotoPaths = ArrayList<String>()
+                photoPaths.forEachIndexed { index, path ->
+                    val sourceFile = File(path)
+                    val newFileName = "photo_${String.format("%04d", index + 1)}.jpg"
+                    val destFile = File(projectDir, newFileName)
+                    
+                    // 源文件可能在临时目录或其他位置，确保复制到项目目录
+                    try {
+                        sourceFile.inputStream().use { input ->
+                            destFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        newPhotoPaths.add(destFile.absolutePath)
+                    } catch (e: Exception) {
+                        // 如果复制失败，记录错误但继续处理其他文件
+                        e.printStackTrace()
+                    }
+                }
+                
+                // 在主线程更新UI
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    Toast.makeText(this@EditActivity, "项目保存成功", Toast.LENGTH_SHORT).show()
+                    
+                    // 保存后退出
+                    finish()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    Toast.makeText(this@EditActivity, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 }

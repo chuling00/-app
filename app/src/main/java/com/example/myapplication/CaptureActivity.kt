@@ -84,9 +84,29 @@ class CaptureActivity : AppCompatActivity() {
     // 在类的成员变量区域修改声明
     private val photoFiles = ArrayList<File>()
 
+    // 在类成员变量区域添加
+    private var isInsertMode = false
+    private var insertPosition = -1
+    private var selectedPhotoPath: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // 清理临时目录
+        clearTempDirectory()
+        
         setContentView(R.layout.activity_capture)
+
+        // 获取传递的参数，判断是否为插入模式
+        intent.getIntExtra("INSERT_POSITION", -1).let { position ->
+            if (position != -1) {
+                isInsertMode = true
+                insertPosition = position
+                intent.getStringExtra("SELECTED_PHOTO_PATH")?.let {
+                    selectedPhotoPath = it
+                }
+            }
+        }
 
         // 设置全屏
         window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -168,10 +188,26 @@ class CaptureActivity : AppCompatActivity() {
         btnFlash = findViewById(R.id.btnFlash)
         btnGrid = findViewById(R.id.btnGrid)
         gridView = findViewById(R.id.gridView)
+
+        // 如果是插入模式，调整UI显示
+        if (isInsertMode) {
+            btnDone.text = "插入"
+            // 如果有选中的照片，显示在预览区
+            selectedPhotoPath?.let { path ->
+                Glide.with(this)
+                    .load(path)
+                    .centerCrop()
+                    .into(ivPreview)
+            }
+        }
     }
 
     private fun setupClickListeners() {
         btnBack.setOnClickListener {
+            if (photoFiles.isNotEmpty()) {
+                clearTempDirectory() // 清除所有已拍摄的照片
+            }
+            setResult(RESULT_CANCELED)
             finish()
         }
 
@@ -188,7 +224,11 @@ class CaptureActivity : AppCompatActivity() {
         }
 
         btnDone.setOnClickListener {
-            showCreateProjectDialog()
+            if (isInsertMode) {
+                confirmInsert()
+            } else {
+                showCreateProjectDialog()
+            }
         }
 
         previewContainer.setOnClickListener {
@@ -339,20 +379,21 @@ class CaptureActivity : AppCompatActivity() {
 
     private fun capturePhoto(onCaptureComplete: (() -> Unit)? = null) {
         val imageCapture = imageCapture ?: return
-        
+
         val startTime = System.currentTimeMillis()
         showCaptureFlash()
-        
-        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
-        if (!projectDir.exists()) projectDir.mkdirs()
 
-        val existingFiles = projectDir.listFiles()?.filter { it.extension == "jpg" } ?: emptyList()
+        // 使用临时目录
+        val tempDir = File(getExternalFilesDir(null), "temp")
+        if (!tempDir.exists()) tempDir.mkdirs()
+
+        val existingFiles = tempDir.listFiles()?.filter { it.extension == "jpg" } ?: emptyList()
         if (existingFiles.size >= 2000) {
             Toast.makeText(this, "已达到最大拍摄数量 2000 张！", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val photoFile = File(projectDir, "photo_${System.currentTimeMillis()}.jpg")
+        val photoFile = File(tempDir, "photo_${System.currentTimeMillis()}.jpg")
         val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
 
         imageCapture.takePicture(
@@ -541,6 +582,11 @@ class CaptureActivity : AppCompatActivity() {
         super.onDestroy()
         stopTimerCapture()
         cameraExecutor.shutdown()
+        
+        // 如果没有保存为项目，清理所有临时照片
+        if (photoFiles.isNotEmpty()) {
+            clearTempDirectory()
+        }
     }
 
     // 添加切换更多工具框的函数
@@ -604,23 +650,65 @@ class CaptureActivity : AppCompatActivity() {
     }
 
     private fun createProject(projectName: String) {
+        // 获取唯一的项目名称
+        val uniqueProjectName = getUniqueProjectName(projectName)
+        
         // 创建项目目录
-        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+        val projectDir = File(getExternalFilesDir(null), "projects/$uniqueProjectName")
         if (!projectDir.exists()) {
             projectDir.mkdirs()
         }
 
-        // 移动所有已拍摄的照片到项目目录
+        // 按照拍摄顺序重命名并移动照片
         photoFiles.forEachIndexed { index, photoFile ->
-            val newFile = File(projectDir, "photo_${index + 1}.jpg")
-            photoFile.renameTo(newFile)
+            val newFileName = "photo_${String.format("%04d", index + 1)}.jpg"
+            val newFile = File(projectDir, newFileName)
+            if (!photoFile.renameTo(newFile)) {
+                // 如果重命名失败，尝试复制文件
+                photoFile.inputStream().use { input ->
+                    newFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+            // 删除原文件
+            photoFile.delete()
         }
 
+        // 清理临时目录
+        clearTempDirectory()
+
         // 保存项目信息
-        saveProjectInfo(projectName, System.currentTimeMillis())
+        saveProjectInfo(uniqueProjectName, System.currentTimeMillis())
+
+        // 返回主页前显示成功提示
+        runOnUiThread {
+            Toast.makeText(this, "项目「$uniqueProjectName」创建成功", Toast.LENGTH_SHORT).show()
+        }
 
         // 返回主页
         finish()
+    }
+
+    // 添加新的辅助函数来获取唯一的项目名称
+    private fun getUniqueProjectName(baseName: String): String {
+        val projectsDir = File(getExternalFilesDir(null), "projects")
+        if (!projectsDir.exists()) {
+            return baseName
+        }
+
+        var counter = 1
+        var newName = baseName
+        var projectDir = File(projectsDir, newName)
+
+        // 如果存在同名项目，则添加序号
+        while (projectDir.exists()) {
+            newName = "$baseName ($counter)"
+            projectDir = File(projectsDir, newName)
+            counter++
+        }
+
+        return newName
     }
 
     private fun saveProjectInfo(projectName: String, createTime: Long) {
@@ -657,6 +745,50 @@ class CaptureActivity : AppCompatActivity() {
         if (resizedBitmap != bitmap) {
             resizedBitmap.recycle()
         }
+    }
+
+    private fun clearTempDirectory() {
+        val tempDir = File(getExternalFilesDir(null), "temp")
+        if (tempDir.exists()) {
+            tempDir.listFiles()?.forEach { file ->
+                file.delete()
+            }
+        }
+    }
+
+    // 修改确认插入的方法
+    private fun confirmInsert() {
+        if (photoFiles.isEmpty()) {
+            Toast.makeText(this, "没有拍摄任何照片", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 创建项目的临时插入目录
+        val projectName = intent.getStringExtra("PROJECT_NAME") ?: return
+        val insertTempDir = File(getExternalFilesDir(null), "insert_temp")
+        if (!insertTempDir.exists()) {
+            insertTempDir.mkdirs()
+        } else {
+            // 清理目录中的所有文件
+            insertTempDir.listFiles()?.forEach { file ->
+                file.delete()
+            }
+        }
+
+        // 复制所有拍摄的照片到临时目录，保持顺序
+        val insertedPhotoPaths = ArrayList<String>()
+        photoFiles.forEachIndexed { index, photoFile ->
+            val newFile = File(insertTempDir, "photo_${String.format("%04d", index + 1)}.jpg")
+            if (photoFile.renameTo(newFile) || (photoFile.copyTo(newFile, true).exists())) {
+                insertedPhotoPaths.add(newFile.absolutePath)
+            }
+        }
+
+        // 返回结果给 EditActivity
+        val resultIntent = Intent()
+        resultIntent.putStringArrayListExtra("NEW_PHOTO_PATHS", insertedPhotoPaths)
+        setResult(RESULT_OK, resultIntent)
+        finish()
     }
 
     companion object {

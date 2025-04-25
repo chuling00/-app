@@ -110,14 +110,14 @@
             android:id="@+id/bufferImageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:scaleType="fitCenter"
+        android:scaleType="fitCenter"
             android:visibility="invisible"/>
 
     </FrameLayout>
 
     <!-- 底部预览区域 -->
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/photoListLayout"
+            android:id="@+id/photoListLayout"
         android:layout_width="0dp"
         android:layout_height="60dp"
         android:paddingStart="8dp"
