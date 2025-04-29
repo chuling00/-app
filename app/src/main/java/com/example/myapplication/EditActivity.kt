@@ -48,6 +48,7 @@ import android.graphics.Canvas
 import android.view.Surface
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 
 class EditActivity : AppCompatActivity() {
     private lateinit var mainImageView: ImageView
@@ -96,14 +97,6 @@ class EditActivity : AppCompatActivity() {
 
         // 配置Glide的缓存策略
         Glide.get(this).setMemoryCategory(MemoryCategory.HIGH)
-
-        // 自动开始加载和播放
-        if (photoPaths.isNotEmpty()) {
-            // 延迟一小段时间以确保界面完全加载
-            handler.postDelayed({
-                startPlayback()
-            }, 500)
-        }
     }
 
     private fun initializeViews() {
@@ -663,7 +656,36 @@ class EditActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
-        bitmapCache.evictAll() // 清除缓存
+        
+        // 清除缓存
+        bitmapCache.evictAll() 
+        
+        // 清理临时目录
+        clearCacheDirectories()
+    }
+
+    // 添加这个方法来清理所有临时目录
+    private fun clearCacheDirectories() {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 清理插入临时目录
+                val insertTempDir = File(getExternalFilesDir(null), "insert_temp")
+                if (insertTempDir.exists()) {
+                    insertTempDir.deleteRecursively()
+                }
+                
+                // 清理备份临时目录
+                val tempBackupDir = File(cacheDir, "backup_$projectName")
+                if (tempBackupDir.exists()) {
+                    tempBackupDir.deleteRecursively()
+                }
+                
+                // 清理Glide缓存
+                Glide.get(this@EditActivity).clearDiskCache()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun loadCorrectedImage(imageView: ImageView, path: String) {
@@ -744,30 +766,201 @@ class EditActivity : AppCompatActivity() {
             // 获取新拍摄的所有照片路径
             val newPhotoPaths = data?.getStringArrayListExtra("NEW_PHOTO_PATHS")
             if (newPhotoPaths != null && newPhotoPaths.isNotEmpty()) {
-                // 在指定位置插入新照片
-                photoPaths.addAll(currentPhotoIndex + 1, newPhotoPaths)
+                // 显示处理进度对话框
+                val progressDialog = AlertDialog.Builder(this)
+                    .setTitle("处理中")
+                    .setMessage("正在更新项目...")
+                    .setCancelable(false)
+                    .create()
+                progressDialog.show()
                 
-                // 更新底部预览列表
-                previewAdapter.notifyDataSetChanged()
+                // 使用主线程监控变量确保操作完成
+                var operationCompleted = false
+                var errorMessage: String? = null
                 
-                // 选中新插入的第一张照片
-                currentPhotoIndex++
+                // 启动协程执行插入操作
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        // 验证当前照片列表是否有效
+                        photoPaths.forEach { path ->
+                            val file = File(path)
+                            if (!file.exists() || !file.canRead()) {
+                                throw Exception("现有照片文件无效: $path")
+                            }
+                        }
+                        
+                        // 验证新照片是否有效
+                        newPhotoPaths.forEach { path ->
+                            val file = File(path)
+                            if (!file.exists() || !file.canRead()) {
+                                throw Exception("新照片文件无效: $path")
+                            }
+                        }
+                        
+                        // 获取项目目录
+                        val projectDir = File(getExternalFilesDir(null), "projects/$projectName")
+                        if (!projectDir.exists()) {
+                            projectDir.mkdirs()
+                        }
+                        
+                        // 计算插入位置
+                        val insertPosition = currentPhotoIndex + 1
+                        
+                        // 创建所有照片路径的完整列表（插入新照片）
+                        val allPaths = ArrayList<String>()
+                        for (i in 0 until insertPosition) {
+                            if (i < photoPaths.size) {
+                                allPaths.add(photoPaths[i])
+                            }
+                        }
+                        allPaths.addAll(newPhotoPaths)
+                        for (i in insertPosition until photoPaths.size) {
+                            allPaths.add(photoPaths[i])
+                        }
+                        
+                        // 重命名和移动所有照片到项目目录，保持正确顺序
+                        val updatedPaths = ArrayList<String>()
+                        
+                        // 确保目标目录存在并且清空之前的临时文件
+                        val tempProjectDir = File(cacheDir, "temp_project_${System.currentTimeMillis()}")
+                        if (tempProjectDir.exists()) {
+                            tempProjectDir.deleteRecursively()
+                        }
+                        tempProjectDir.mkdirs()
+                        
+                        // 先复制所有照片到临时目录（带新序号）
+                        allPaths.forEachIndexed { index, path ->
+                            val sourceFile = File(path)
+                            val tempFileName = "photo_${String.format("%04d", index + 1)}.jpg"
+                            val tempFile = File(tempProjectDir, tempFileName)
+                            
+                            try {
+                                if (sourceFile.exists() && sourceFile.length() > 0) {
+                                    // 复制到临时目录
+                                    sourceFile.inputStream().use { input ->
+                                        tempFile.outputStream().use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+                                    
+                                    // 确认临时文件创建成功
+                                    if (!tempFile.exists() || tempFile.length() == 0L) {
+                                        throw Exception("复制到临时文件失败: ${tempFile.absolutePath}")
+                                    }
+                                } else {
+                                    throw Exception("源文件不存在或大小为0: $path")
+                                }
+                            } catch (e: Exception) {
+                                // 记录详细错误但继续处理
+                                Log.e("EditActivity", "复制照片失败: ${e.message}", e)
+                                throw e
+                            }
+                        }
+                        
+                        // 然后复制所有临时照片到项目目录
+                        tempProjectDir.listFiles()?.forEachIndexed { index, file ->
+                            val fileName = "photo_${String.format("%04d", index + 1)}.jpg"
+                            val destFile = File(projectDir, fileName)
+                            
+                            try {
+                                // 如果目标已存在，先删除
+                                if (destFile.exists()) {
+                                    destFile.delete()
+                                }
+                                
+                                // 复制到项目目录
+                                file.inputStream().use { input ->
+                                    destFile.outputStream().use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                                
+                                updatedPaths.add(destFile.absolutePath)
+                                
+                                // 验证复制是否成功
+                                if (!destFile.exists() || destFile.length() == 0L) {
+                                    throw Exception("复制到项目目录失败: ${destFile.absolutePath}")
+                                }
+                            } catch (e: Exception) {
+                                Log.e("EditActivity", "复制到项目目录失败: ${file.name}", e)
+                                throw e
+                            }
+                        }
+                        
+                        // 清理临时目录
+                        try {
+                            tempProjectDir.deleteRecursively()
+                        } catch (e: Exception) {
+                            Log.e("EditActivity", "清理临时目录失败", e)
+                        }
+                        
+                        // 完成标记
+                        operationCompleted = true
+                        
+                        // 在主线程更新UI
+                        withContext(Dispatchers.Main) {
+                            try {
+                                // 更新照片路径列表
+                                photoPaths.clear()
+                                photoPaths.addAll(updatedPaths)
+                                
+                                // 更新RecyclerView
+                                previewAdapter.notifyDataSetChanged()
+                                
+                                // 选中插入后的第一张新照片
+                                currentPhotoIndex = insertPosition
+                                previewAdapter.setSelectedPosition(currentPhotoIndex)
+                                
+                                // 确保选中的索引有效
+                                if (currentPhotoIndex >= photoPaths.size) {
+                                    currentPhotoIndex = photoPaths.size - 1
+                                }
+                                
+                                // 更新主预览图
+                                if (photoPaths.isNotEmpty() && currentPhotoIndex >= 0) {
+                                    Glide.with(this@EditActivity)
+                                        .load(photoPaths[currentPhotoIndex])
+                                        .fitCenter()
+                                        .into(mainImageView)
+                                }
+                                
+                                // 滚动预览区域到新插入的照片位置
+                                photoListLayout.scrollToPosition(currentPhotoIndex)
+                                
+                                // 清除缓存，以便下次播放时重新加载
+                                bitmapCache.evictAll()
+                                
+                                // 显示提示信息
+                                Toast.makeText(this@EditActivity, "已成功插入 ${newPhotoPaths.size} 张新照片", Toast.LENGTH_SHORT).show()
+                                
+                                // 只有UI操作都完成后才关闭对话框
+                                progressDialog.dismiss()
+                            } catch (e: Exception) {
+                                Log.e("EditActivity", "UI更新失败: ${e.message}", e)
+                                progressDialog.dismiss()
+                                Toast.makeText(this@EditActivity, "UI更新失败: ${e.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // 记录详细错误
+                        Log.e("EditActivity", "插入照片操作失败", e)
+                        errorMessage = "插入照片失败: ${e.message}"
+                        operationCompleted = true
+                        
+                        withContext(Dispatchers.Main) {
+                            progressDialog.dismiss()
+                            Toast.makeText(this@EditActivity, errorMessage, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
                 
-                // 更新主预览图
-                Glide.with(this)
-                    .load(newPhotoPaths[0])
-                    .fitCenter()
-                    .into(mainImageView)
-                previewAdapter.setSelectedPosition(currentPhotoIndex)
-                
-                // 清除缓存，以便下次播放时重新加载
-                bitmapCache.evictAll()
-                
-                // 滚动预览区域到新插入的照片位置
-                photoListLayout.scrollToPosition(currentPhotoIndex)
-                
-                // 显示提示信息
-                Toast.makeText(this, "已成功插入 ${newPhotoPaths.size} 张新照片", Toast.LENGTH_SHORT).show()
+                // 添加超时处理以防止对话框无限显示
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (!operationCompleted) {
+                        progressDialog.dismiss()
+                        Toast.makeText(this, "操作超时，请重试", Toast.LENGTH_LONG).show()
+                    }
+                }, 30000) // 30秒超时
             }
         }
     }
@@ -786,6 +979,14 @@ class EditActivity : AppCompatActivity() {
 
     // 修改保存项目更改的方法
     private fun saveProjectChanges() {
+        // 验证是否有照片需要保存
+        if (photoPaths.isEmpty()) {
+            // 空项目直接完成
+            Toast.makeText(this, "项目保存成功", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+        
         // 显示保存进度对话框
         val progressDialog = AlertDialog.Builder(this)
             .setTitle("正在保存")
@@ -794,6 +995,9 @@ class EditActivity : AppCompatActivity() {
             .create()
         progressDialog.show()
 
+        // 使用主线程监控变量确保操作完成
+        var operationCompleted = false
+        
         // 启动协程在后台执行保存操作
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -802,57 +1006,118 @@ class EditActivity : AppCompatActivity() {
                 if (!projectDir.exists()) {
                     projectDir.mkdirs()
                 }
-
-                // 先删除项目目录中的所有文件
-                projectDir.listFiles()?.forEach { file ->
-                    file.delete()
-                }
-
-                // 如果没有照片，创建空项目
-                if (photoPaths.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        progressDialog.dismiss()
-                        Toast.makeText(this@EditActivity, "项目保存成功", Toast.LENGTH_SHORT).show()
-                        finish()
-                    }
-                    return@launch
-                }
-
-                // 重新按顺序编号并复制所有照片到项目目录
-                val newPhotoPaths = ArrayList<String>()
-                photoPaths.forEachIndexed { index, path ->
-                    val sourceFile = File(path)
-                    val newFileName = "photo_${String.format("%04d", index + 1)}.jpg"
-                    val destFile = File(projectDir, newFileName)
-                    
-                    // 源文件可能在临时目录或其他位置，确保复制到项目目录
-                    try {
-                        sourceFile.inputStream().use { input ->
-                            destFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                        newPhotoPaths.add(destFile.absolutePath)
-                    } catch (e: Exception) {
-                        // 如果复制失败，记录错误但继续处理其他文件
-                        e.printStackTrace()
+                
+                // 创建临时目录用于保存新的照片文件
+                val tempDir = File(cacheDir, "temp_save_${System.currentTimeMillis()}")
+                tempDir.mkdirs()
+                
+                // 先检查源文件是否都存在
+                val validPaths = ArrayList<String>()
+                photoPaths.forEach { path ->
+                    val file = File(path)
+                    if (file.exists() && file.canRead() && file.length() > 0) {
+                        validPaths.add(path)
+                    } else {
+                        Log.e("EditActivity", "文件不存在或无法读取: $path")
                     }
                 }
                 
+                if (validPaths.isEmpty()) {
+                    throw Exception("没有有效的照片文件可以保存")
+                }
+                
+                // 根据有效路径重新编号并复制到临时目录
+                var success = true
+                validPaths.forEachIndexed { index, path ->
+                    val sourceFile = File(path)
+                    val newFileName = "photo_${String.format("%04d", index + 1)}.jpg"
+                    val tempFile = File(tempDir, newFileName)
+                    
+                    try {
+                        sourceFile.inputStream().use { input ->
+                            tempFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        
+                        if (!tempFile.exists() || tempFile.length() == 0L) {
+                            Log.e("EditActivity", "复制到临时文件失败: ${tempFile.absolutePath}")
+                            success = false
+                        }
+                    } catch (e: Exception) {
+                        Log.e("EditActivity", "复制照片失败: ${e.message}", e)
+                        success = false
+                    }
+                }
+                
+                if (!success) {
+                    throw Exception("部分照片复制失败，保存取消")
+                }
+                
+                // 清空项目目录中的现有照片
+                projectDir.listFiles()?.forEach { file ->
+                    if (file.extension.lowercase() == "jpg") {
+                        file.delete()
+                    }
+                }
+                
+                // 将临时目录中的照片复制到项目目录
+                val updatedPaths = ArrayList<String>()
+                tempDir.listFiles()?.sortedBy { it.name }?.forEach { file ->
+                    val destFile = File(projectDir, file.name)
+                    try {
+                        file.copyTo(destFile, overwrite = true)
+                        updatedPaths.add(destFile.absolutePath)
+                    } catch (e: Exception) {
+                        Log.e("EditActivity", "复制到项目目录失败: ${file.name}", e)
+                        success = false
+                    }
+                }
+                
+                if (!success) {
+                    throw Exception("保存到项目目录失败")
+                }
+                
+                // 清理临时目录
+                try {
+                    tempDir.deleteRecursively()
+                } catch (e: Exception) {
+                    Log.e("EditActivity", "清理临时目录失败", e)
+                }
+                
+                // 操作完成标记
+                operationCompleted = true
+                
                 // 在主线程更新UI
                 withContext(Dispatchers.Main) {
+                    // 更新照片路径以确保它们都指向项目目录中的最新文件
+                    photoPaths.clear()
+                    photoPaths.addAll(updatedPaths)
+                    
                     progressDialog.dismiss()
                     Toast.makeText(this@EditActivity, "项目保存成功", Toast.LENGTH_SHORT).show()
-                    
-                    // 保存后退出
                     finish()
                 }
             } catch (e: Exception) {
+                Log.e("EditActivity", "保存项目失败", e)
+                
+                operationCompleted = true
+                
                 withContext(Dispatchers.Main) {
                     progressDialog.dismiss()
-                    Toast.makeText(this@EditActivity, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@EditActivity, "保存失败: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
+        
+        // 添加超时处理
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!operationCompleted) {
+                progressDialog.dismiss()
+                Toast.makeText(this, "保存操作超时，请重试", Toast.LENGTH_LONG).show()
+            }
+        }, 30000) // 30秒超时
     }
 }
+
+

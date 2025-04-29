@@ -28,6 +28,11 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import com.bumptech.glide.request.RequestListener
+import com.bumptech.glide.request.target.Target
+import android.graphics.drawable.Drawable
+import com.bumptech.glide.load.engine.GlideException
+import javax.sql.DataSource
 
 class CaptureActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -231,12 +236,6 @@ class CaptureActivity : AppCompatActivity() {
             }
         }
 
-        previewContainer.setOnClickListener {
-            lastCapturedPhoto?.let { photo ->
-                showFullScreenPreview(photo)
-            }
-        }
-
         btnTimer.setOnClickListener {
             if (!isTimerRunning) {
                 showIntervalDialog()
@@ -380,7 +379,6 @@ class CaptureActivity : AppCompatActivity() {
     private fun capturePhoto(onCaptureComplete: (() -> Unit)? = null) {
         val imageCapture = imageCapture ?: return
 
-        val startTime = System.currentTimeMillis()
         showCaptureFlash()
 
         // 使用临时目录
@@ -401,10 +399,6 @@ class CaptureActivity : AppCompatActivity() {
             ContextCompat.getMainExecutor(this),
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    val endTime = System.currentTimeMillis()
-                    val captureTime = endTime - startTime
-                    Log.d(TAG, "实际拍摄耗时: ${captureTime}ms")
-                    
                     this@CaptureActivity.photoFiles.add(photoFile)
                     
                     updatePreviewImage(photoFile)
@@ -420,27 +414,44 @@ class CaptureActivity : AppCompatActivity() {
                 }
 
                 override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                    Toast.makeText(baseContext, "拍照失败: ${exc.message}", 
-                        Toast.LENGTH_SHORT).show()
+                    Toast.makeText(baseContext, "拍照失败", Toast.LENGTH_SHORT).show()
                     onCaptureComplete?.invoke()
                 }
             }
         )
     }
 
-    private fun showFullScreenPreview(photo: File) {
-        val intent = Intent(this, PreviewActivity::class.java).apply {
-            putExtra("photo_path", photo.absolutePath)
-        }
-        startActivity(intent)
-    }
-
     private fun updatePreviewImage(photo: File) {
         lastCapturedPhoto = photo
+        
         Glide.with(this)
             .load(photo)
             .centerCrop()
+            .listener(object : RequestListener<Drawable> {
+                override fun onLoadFailed(
+                    e: GlideException?,
+                    model: Any?,
+                    target: Target<Drawable>,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    Toast.makeText(
+                        this@CaptureActivity, 
+                        "预览图片加载失败", 
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return false
+                }
+
+                override fun onResourceReady(
+                    resource: Drawable,
+                    model: Any,
+                    target: Target<Drawable>?,
+                    dataSource: com.bumptech.glide.load.DataSource,
+                    isFirstResource: Boolean
+                ): Boolean {
+                    return false
+                }
+            })
             .into(ivPreview)
     }
 
@@ -663,16 +674,21 @@ class CaptureActivity : AppCompatActivity() {
         photoFiles.forEachIndexed { index, photoFile ->
             val newFileName = "photo_${String.format("%04d", index + 1)}.jpg"
             val newFile = File(projectDir, newFileName)
-            if (!photoFile.renameTo(newFile)) {
-                // 如果重命名失败，尝试复制文件
-                photoFile.inputStream().use { input ->
-                    newFile.outputStream().use { output ->
-                        input.copyTo(output)
+            try {
+                if (!photoFile.renameTo(newFile)) {
+                    // 如果重命名失败，尝试复制文件
+                    photoFile.inputStream().use { input ->
+                        newFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
                     }
+                    // 删除原文件
+                    photoFile.delete()
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "保存照片失败: ${e.message}")
+                // 继续处理其他照片
             }
-            // 删除原文件
-            photoFile.delete()
         }
 
         // 清理临时目录
@@ -694,6 +710,7 @@ class CaptureActivity : AppCompatActivity() {
     private fun getUniqueProjectName(baseName: String): String {
         val projectsDir = File(getExternalFilesDir(null), "projects")
         if (!projectsDir.exists()) {
+            projectsDir.mkdirs()
             return baseName
         }
 
@@ -750,8 +767,16 @@ class CaptureActivity : AppCompatActivity() {
     private fun clearTempDirectory() {
         val tempDir = File(getExternalFilesDir(null), "temp")
         if (tempDir.exists()) {
-            tempDir.listFiles()?.forEach { file ->
-                file.delete()
+            try {
+                // 确保删除所有文件
+                tempDir.listFiles()?.forEach { file ->
+                    if (!file.delete()) {
+                        // 如果删除失败，尝试强制删除
+                        file.deleteOnExit()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
