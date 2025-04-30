@@ -50,6 +50,10 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.util.Log
 import android.net.Uri
+import androidx.lifecycle.lifecycleScope
+import android.widget.Spinner
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 
 class EditActivity : AppCompatActivity() {
     private lateinit var mainImageView: ImageView
@@ -77,6 +81,12 @@ class EditActivity : AppCompatActivity() {
     private val bitmapCache = LruCache<Int, Bitmap>(20) // 缓存20帧
     private val maxPlaybackWidth = 1280 // 播放时的最大宽度
     private var isExporting = false
+    private var isAnimating = false
+    private var progressDialog: AlertDialog? = null // 使用可空类型而非lateinit
+    private var animationSpeed: Float = 15f // 默认动画速度
+    private var isLooping: Boolean = true // 默认循环播放
+    private var animationHandler = Handler(Looper.getMainLooper())
+    private lateinit var playButton: ImageButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -91,6 +101,9 @@ class EditActivity : AppCompatActivity() {
         // 获取传递的照片路径和项目名
         photoPaths = intent.getStringArrayListExtra("PHOTO_PATHS") ?: ArrayList()
         projectName = intent.getStringExtra("PROJECT_NAME") ?: ""
+        
+        // 初始化animationHandler
+        animationHandler = Handler(Looper.getMainLooper())
 
         initializeViews()
         setupPhotoList()
@@ -111,6 +124,7 @@ class EditActivity : AppCompatActivity() {
         btnPlay = findViewById(R.id.btnPlay)
         btnDelete = findViewById(R.id.btnDelete)
         btnExport = findViewById(R.id.btnExport)
+        playButton = findViewById(R.id.btnPlay)
         
         // 初始化RecyclerView
         photoListLayout.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
@@ -211,17 +225,37 @@ class EditActivity : AppCompatActivity() {
                 startExportVideo()
             }
         }
+
+        playButton.setOnClickListener {
+            if (isAnimating) {
+                stopAnimation()
+            } else {
+                startAnimation()
+            }
+        }
     }
 
     private fun showFrameRateDialog() {
         val frameRates = arrayOf("1fps", "5fps", "10fps", "15fps", "20fps", "30fps")
         val frameRateValues = arrayOf(1, 5, 10, 15, 20, 30)
+        
+        // 找到当前帧率在数组中的位置
+        val currentIndex = frameRateValues.indexOf(currentFps).let { 
+            if (it == -1) 3 else it  // 默认选中15fps(索引3)
+        }
 
         AlertDialog.Builder(this)
             .setTitle("选择帧率")
-            .setItems(frameRates) { _, which ->
+            .setSingleChoiceItems(frameRates, currentIndex) { dialog, which ->
                 currentFps = frameRateValues[which]
+                // 同时更新动画速度
+                animationSpeed = currentFps.toFloat()
+                dialog.dismiss()
+                
+                // 显示当前选择的帧率
+                Toast.makeText(this, "已设置帧率为 ${frameRates[which]}", Toast.LENGTH_SHORT).show()
             }
+            .setNegativeButton("取消", null)
             .show()
     }
 
@@ -412,286 +446,48 @@ class EditActivity : AppCompatActivity() {
         val qualityOptions = arrayOf("低质量 (480p)", "中等质量 (720p)", "高质量 (1080p)")
         val qualityValues = arrayOf(Triple(854, 480, 4_000_000), Triple(1280, 720, 8_000_000), Triple(1920, 1080, 15_000_000))
         
-        var selectedQuality = 1 // 默认选择中等质量
+        val fpsOptions = arrayOf("1fps", "5fps", "10fps", "15fps", "20fps", "30fps")
+        val fpsValues = arrayOf(1, 5, 10, 15, 20, 30)
         
+        var selectedQuality = 1 // 默认选择中等质量
+        var selectedFps = currentFps // 默认使用当前帧率
+        
+        // 找到当前帧率对应的索引
+        val currentFpsIndex = fpsValues.indexOf(currentFps).let { 
+            if (it == -1) 3 else it // 默认15fps
+        }
+        
+        // 先选择质量
         AlertDialog.Builder(this)
             .setTitle("选择导出质量")
-            .setSingleChoiceItems(qualityOptions, selectedQuality) { _, which ->
+            .setSingleChoiceItems(qualityOptions, selectedQuality) { dialog, which ->
                 selectedQuality = which
-            }
-            .setPositiveButton("确定") { _, _ ->
-                val (width, height, bitrate) = qualityValues[selectedQuality]
-                startExporting(width, height, bitrate)
+                dialog.dismiss()
+                
+                // 然后选择帧率
+                AlertDialog.Builder(this)
+                    .setTitle("选择导出帧率")
+                    .setSingleChoiceItems(fpsOptions, currentFpsIndex) { innerDialog, fpsIndex ->
+                        selectedFps = fpsValues[fpsIndex]
+                        innerDialog.dismiss()
+                        
+                        // 确认导出设置
+                        val message = "将以 ${qualityOptions[selectedQuality]} 和 ${fpsOptions[fpsIndex]} 导出视频"
+                        AlertDialog.Builder(this)
+                            .setTitle("确认导出设置")
+                            .setMessage(message)
+                            .setPositiveButton("开始导出") { _, _ ->
+                                val (width, height, bitrate) = qualityValues[selectedQuality]
+                                startExporting(width, height, bitrate, selectedFps)
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
+                    }
+                    .show()
             }
             .setNegativeButton("取消", null)
             .show()
     }
-    
-
-    private fun startExporting(width: Int, height: Int, bitrate: Int) {
-        if (photoPaths.isEmpty()) {
-            Toast.makeText(this, "没有可导出的照片", Toast.LENGTH_SHORT).show()
-            return
-        }
-        
-        // 检查存储权限
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(
-                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                REQUEST_STORAGE_PERMISSION
-            )
-            return
-        }
-        
-        isExporting = true
-        
-        val progressDialog = AlertDialog.Builder(this)
-            .setTitle("正在导出")
-            .setMessage("准备中...")
-            .setCancelable(false)
-            .create()
-        progressDialog.show()
-        
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val tempFile = createVideoFile()
-                exportToVideo(tempFile, progressDialog)
-                finalizeVideo(tempFile)
-                
-                withContext(Dispatchers.Main) {
-                    progressDialog.dismiss()
-                    Toast.makeText(this@EditActivity, "视频导出成功", Toast.LENGTH_LONG).show()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    progressDialog.dismiss()
-                    Toast.makeText(this@EditActivity, "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            } finally {
-                isExporting = false
-            }
-        }
-    }
-
-    private fun createVideoFile(): File {
-        val filename = "stop_motion_${System.currentTimeMillis()}.mp4"
-        
-        // 检查是否有存储权限
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, filename)
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES)
-                    // 添加IS_PENDING标志
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-                
-                val uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
-                    ?: throw Exception("无法创建视频文件")
-                    
-                // 使用ContentResolver获取文件描述符
-                val parcelFileDescriptor = contentResolver.openFileDescriptor(uri, "w")
-                    ?: throw Exception("无法打开文件描述符")
-                    
-                // 创建临时文件
-                val tempFile = File(cacheDir, filename)
-                return tempFile
-            } catch (e: Exception) {
-                // 如果MediaStore方法失败，尝试使用应用私有目录
-                return File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), filename)
-            }
-        } else {
-            // 对于低版本Android，使用应用私有目录
-            return File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), filename)
-        }
-    }
-
-    private suspend fun exportToVideo(outputFile: File, progressDialog: AlertDialog) {
-        withContext(Dispatchers.IO) {
-            // 确保分辨率是16的倍数（H.264要求）
-            val width = 1280  // 16的倍数
-            val height = 720  // 16的倍数
-            val bitRate = 8_000_000
-            val frameTimeUs = 1000000L / currentFps
-            
-            try {
-                // 创建媒体混合器
-                val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-                
-                // 创建视频编码器
-                val videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                
-                // 创建视频格式
-                val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-                    setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar)
-                    setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
-                    setInteger(MediaFormat.KEY_FRAME_RATE, currentFps)
-                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-                }
-                
-                // 配置并启动编码器
-                videoEncoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                videoEncoder.start()
-                
-                var videoTrackIndex = -1
-                var muxerStarted = false
-                val bufferInfo = MediaCodec.BufferInfo()
-                
-                withContext(Dispatchers.Main) {
-                    progressDialog.setMessage("准备处理 ${photoPaths.size} 帧...")
-                }
-                
-                // 处理每一帧图像
-                photoPaths.forEachIndexed { frameIndex, path ->
-                    withContext(Dispatchers.Main) {
-                        progressDialog.setMessage("正在处理第 ${frameIndex + 1} 帧，共 ${photoPaths.size} 帧")
-                    }
-                    
-                    // 读取和缩放位图
-                    val bitmap = BitmapFactory.decodeFile(path)
-                    val scaledBitmap = Bitmap.createScaledBitmap(bitmap, width, height, true)
-                    
-                    // 转换为YUV
-                    val yuvData = ByteArray(width * height * 3 / 2)
-                    val argb = IntArray(width * height)
-                    scaledBitmap.getPixels(argb, 0, width, 0, 0, width, height)
-                    
-                    var yIndex = 0
-                    var uvIndex = width * height
-                    
-                    // 将ARGB转换为YUV420SP (NV12, 而不是NV21)
-                    for (j in 0 until height) {
-                        for (i in 0 until width) {
-                            val pixel = argb[j * width + i]
-                            val r = (pixel shr 16) and 0xff
-                            val g = (pixel shr 8) and 0xff
-                            val b = pixel and 0xff
-                            
-                            // Y
-                            val y = ((66 * r + 129 * g + 25 * b + 128) shr 8) + 16
-                            yuvData[yIndex++] = y.toByte()
-                            
-                            // U and V (NV12格式, 注意U和V的顺序与NV21相反)
-                            if (j % 2 == 0 && i % 2 == 0) {
-                                val u = ((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128
-                                val v = ((112 * r - 94 * g - 18 * b + 128) shr 8) + 128
-                                yuvData[uvIndex++] = u.toByte()  // U
-                                yuvData[uvIndex++] = v.toByte()  // V
-                            }
-                        }
-                    }
-                    
-                    // 释放位图
-                    bitmap.recycle()
-                    scaledBitmap.recycle()
-
-                    // 获取输入缓冲区
-                    val inputBufferIndex = videoEncoder.dequeueInputBuffer(-1)
-                    if (inputBufferIndex >= 0) {
-                        val inputBuffer = videoEncoder.getInputBuffer(inputBufferIndex)
-                        inputBuffer?.clear()
-                        inputBuffer?.put(yuvData)
-                        
-                        val presentationTimeUs = frameIndex * frameTimeUs
-                        videoEncoder.queueInputBuffer(inputBufferIndex, 0, yuvData.size, presentationTimeUs, 0)
-                    }
-                    
-                    // 处理编码输出
-                    var outputDone = false
-                    while (!outputDone) {
-                        val bufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 10000)
-                        
-                        if (bufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                            outputDone = true
-                        } else if (bufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                            // 重要：在收到输出格式变更后才添加轨道并启动muxer
-                            if (videoTrackIndex == -1) {
-                                val newFormat = videoEncoder.outputFormat
-                                videoTrackIndex = muxer.addTrack(newFormat)
-                                muxer.start()
-                                muxerStarted = true
-                            }
-                        } else if (bufferIndex >= 0) {
-                            val encodedData = videoEncoder.getOutputBuffer(bufferIndex)
-                            
-                            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                bufferInfo.size = 0
-                            }
-                            
-                            if (bufferInfo.size > 0 && muxerStarted) {
-                                encodedData?.position(bufferInfo.offset)
-                                encodedData?.limit(bufferInfo.offset + bufferInfo.size)
-                                muxer.writeSampleData(videoTrackIndex, encodedData!!, bufferInfo)
-                            }
-                            
-                            videoEncoder.releaseOutputBuffer(bufferIndex, false)
-                            
-                            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                                outputDone = true
-                            }
-                        }
-                    }
-                    
-                    // 每10帧延迟一下，避免过热
-                    if (frameIndex % 10 == 0) {
-                        delay(50)
-                    }
-                }
-                
-                // 标记视频流结束
-                val inputBufferIndex = videoEncoder.dequeueInputBuffer(-1)
-                if (inputBufferIndex >= 0) {
-                    videoEncoder.queueInputBuffer(
-                        inputBufferIndex, 0, 0,
-                        photoPaths.size * frameTimeUs,
-                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                    )
-                }
-
-                // 处理剩余的编码输出
-                var encoderDone = false
-                while (!encoderDone) {
-                    val bufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 10000)
-                    
-                    if (bufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                        encoderDone = true
-                    } else if (bufferIndex >= 0) {
-                        val encodedData = videoEncoder.getOutputBuffer(bufferIndex)
-                        
-                        if (bufferInfo.size > 0 && muxerStarted) {
-                            encodedData?.position(bufferInfo.offset)
-                            encodedData?.limit(bufferInfo.offset + bufferInfo.size)
-                            muxer.writeSampleData(videoTrackIndex, encodedData!!, bufferInfo)
-                        }
-                        
-                        videoEncoder.releaseOutputBuffer(bufferIndex, false)
-                        
-                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            encoderDone = true
-                        }
-                    }
-                }
-
-                // 清理资源
-                try {
-                    videoEncoder.stop()
-                    videoEncoder.release()
-                    
-                    muxer.stop()
-                    muxer.release()
-                } catch (e: Exception) {
-                    Log.e("EditActivity", "清理资源错误: ${e.message}", e)
-                }
-                
-            } catch (e: Exception) {
-                Log.e("EditActivity", "视频导出错误: ${e.message}", e)
-                throw e
-            }
-        }
-    }
-    
 
     override fun onDestroy() {
         super.onDestroy()
@@ -1007,10 +803,10 @@ class EditActivity : AppCompatActivity() {
                                 Toast.makeText(this@EditActivity, "已成功插入 ${newPhotoPaths.size} 张新照片", Toast.LENGTH_SHORT).show()
                                 
                                 // 只有UI操作都完成后才关闭对话框
-                                progressDialog.dismiss()
+                                progressDialog?.dismiss()
                             } catch (e: Exception) {
                                 Log.e("EditActivity", "UI更新失败: ${e.message}", e)
-                                progressDialog.dismiss()
+                                progressDialog?.dismiss()
                                 Toast.makeText(this@EditActivity, "UI更新失败: ${e.message}", Toast.LENGTH_LONG).show()
                             }
                         }
@@ -1021,7 +817,7 @@ class EditActivity : AppCompatActivity() {
                         operationCompleted = true
                         
                         withContext(Dispatchers.Main) {
-                            progressDialog.dismiss()
+                            progressDialog?.dismiss()
                             Toast.makeText(this@EditActivity, errorMessage, Toast.LENGTH_LONG).show()
                         }
                     }
@@ -1030,7 +826,7 @@ class EditActivity : AppCompatActivity() {
                 // 添加超时处理以防止对话框无限显示
                 Handler(Looper.getMainLooper()).postDelayed({
                     if (!operationCompleted) {
-                        progressDialog.dismiss()
+                        progressDialog?.dismiss()
                         Toast.makeText(this, "操作超时，请重试", Toast.LENGTH_LONG).show()
                     }
                 }, 30000) // 30秒超时
@@ -1190,6 +986,350 @@ class EditActivity : AppCompatActivity() {
                 Toast.makeText(this, "保存操作超时，请重试", Toast.LENGTH_LONG).show()
             }
         }, 30000) // 30秒超时
+    }
+
+    private fun startAnimation() {
+        if (photoPaths.isEmpty()) return
+        
+        if (isAnimating) return
+        isAnimating = true
+        
+        // 使用当前设置的帧率
+        animationSpeed = currentFps.toFloat()
+        
+        // 预加载压缩后的图片到内存中
+        val compressedBitmaps = ArrayList<Bitmap>()
+        val targetWidth = 640  // 降低预览分辨率
+        val targetHeight = 360
+        
+        progressDialog = AlertDialog.Builder(this)
+            .setTitle("正在加载动画...")
+            .setMessage("正在准备播放...")
+            .setCancelable(false)
+            .create()
+        progressDialog?.show()
+        
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // 预加载所有压缩后的图片
+                for (photoPath in photoPaths) {
+                    val options = BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    BitmapFactory.decodeFile(photoPath, options)
+                    
+                    // 计算压缩比例
+                    val scaleWidth = options.outWidth / targetWidth.toFloat()
+                    val scaleHeight = options.outHeight / targetHeight.toFloat()
+                    val scale = max(scaleWidth, scaleHeight)
+                    
+                    if (scale > 1) {
+                        options.inJustDecodeBounds = false
+                        options.inSampleSize = scale.toInt()
+                        options.inPreferredConfig = Bitmap.Config.RGB_565  // 使用更小的内存占用配置
+                        val bitmap = BitmapFactory.decodeFile(photoPath, options)
+                        compressedBitmaps.add(bitmap)
+                    } else {
+                        // 如果图片已经很小，直接加载
+                        val bitmap = BitmapFactory.decodeFile(photoPath)
+                        compressedBitmaps.add(bitmap)
+                    }
+                }
+                
+                withContext(Dispatchers.Main) {
+                    progressDialog?.dismiss()
+
+                    // 使用压缩后的图片进行动画播放
+                    animationHandler.removeCallbacksAndMessages(null)
+                    
+                    var currentIndex = 0
+                    val runnable = object : Runnable {
+                        override fun run() {
+                            if (!isAnimating) return
+                            
+                            if (currentIndex < compressedBitmaps.size) {
+                                mainImageView.setImageBitmap(compressedBitmaps[currentIndex])
+                                currentIndex++
+                                if (currentIndex >= compressedBitmaps.size) {
+                                    if (isLooping) {
+                                        currentIndex = 0
+                                        animationHandler.postDelayed(this, (1000 / animationSpeed).toLong())
+                                    } else {
+                                        isAnimating = false
+                                        playButton.setImageResource(R.drawable.ic_play)
+                                    }
+                                } else {
+                                    animationHandler.postDelayed(this, (1000 / animationSpeed).toLong())
+                                }
+                            }
+                        }
+                    }
+
+                    animationHandler.post(runnable)
+                    playButton.setImageResource(R.drawable.ic_pause)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressDialog?.dismiss()
+                    isAnimating = false
+                    Toast.makeText(this@EditActivity, "播放动画失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun stopAnimation() {
+        isAnimating = false
+        playButton.setImageResource(R.drawable.ic_play)
+        animationHandler.removeCallbacksAndMessages(null)
+        System.gc()  // 建议垃圾回收
+    }
+
+    private fun max(a: Float, b: Float): Float {
+        return if (a > b) a else b
+    }
+
+    private fun startExporting(width: Int, height: Int, bitrate: Int, fps: Int) {
+        if (photoPaths.isEmpty()) {
+            Toast.makeText(this, "没有可导出的照片", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // 检查存储权限
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQUEST_STORAGE_PERMISSION
+            )
+            return
+        }
+        
+        isExporting = true
+        
+        val progressDialog = AlertDialog.Builder(this)
+            .setTitle("正在导出")
+            .setMessage("准备中...")
+            .setCancelable(false)
+            .create()
+        progressDialog.show()
+        
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val tempFile = createVideoFile()
+                exportToVideo(tempFile, progressDialog, fps)
+                finalizeVideo(tempFile)
+                
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    Toast.makeText(this@EditActivity, "视频导出成功", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    progressDialog.dismiss()
+                    Toast.makeText(this@EditActivity, "导出失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                isExporting = false
+            }
+        }
+    }
+
+    private suspend fun exportToVideo(outputFile: File, progressDialog: AlertDialog, fps: Int) {
+        withContext(Dispatchers.IO) {
+            // 确保分辨率是16的倍数（H.264要求）
+            val width = 1280  // 16的倍数
+            val height = 720  // 16的倍数
+            val bitRate = 8_000_000
+            val frameTimeUs = 1000000L / fps
+            
+            try {
+                // 创建媒体混合器
+                val muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                
+                // 创建视频编码器
+                val videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                
+                // 创建视频格式
+                val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
+                    setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar)
+                    setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
+                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                }
+                
+                // 配置并启动编码器
+                videoEncoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                videoEncoder.start()
+                
+                var videoTrackIndex = -1
+                var muxerStarted = false
+                val bufferInfo = MediaCodec.BufferInfo()
+                
+                withContext(Dispatchers.Main) {
+                    progressDialog.setMessage("准备处理 ${photoPaths.size} 帧...")
+                }
+                
+                // 处理每一帧图像
+                photoPaths.forEachIndexed { frameIndex, path ->
+                    withContext(Dispatchers.Main) {
+                        progressDialog.setMessage("正在处理第 ${frameIndex + 1} 帧，共 ${photoPaths.size} 帧")
+                    }
+                    
+                    // 读取和缩放位图
+                    val bitmap = BitmapFactory.decodeFile(path)
+                    val scaledBitmap = Bitmap.createScaledBitmap(bitmap, width, height, true)
+                    
+                    // 转换为YUV
+                    val yuvData = ByteArray(width * height * 3 / 2)
+                    val argb = IntArray(width * height)
+                    scaledBitmap.getPixels(argb, 0, width, 0, 0, width, height)
+                    
+                    var yIndex = 0
+                    var uvIndex = width * height
+                    
+                    // 将ARGB转换为YUV420SP (NV12, 而不是NV21)
+                    for (j in 0 until height) {
+                        for (i in 0 until width) {
+                            val pixel = argb[j * width + i]
+                            val r = (pixel shr 16) and 0xff
+                            val g = (pixel shr 8) and 0xff
+                            val b = pixel and 0xff
+                            
+                            // Y
+                            val y = ((66 * r + 129 * g + 25 * b + 128) shr 8) + 16
+                            yuvData[yIndex++] = y.toByte()
+                            
+                            // U and V (NV12格式, 注意U和V的顺序与NV21相反)
+                            if (j % 2 == 0 && i % 2 == 0) {
+                                val u = ((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128
+                                val v = ((112 * r - 94 * g - 18 * b + 128) shr 8) + 128
+                                yuvData[uvIndex++] = u.toByte()  // U
+                                yuvData[uvIndex++] = v.toByte()  // V
+                            }
+                        }
+                    }
+                    
+                    // 释放位图
+                    bitmap.recycle()
+                    scaledBitmap.recycle()
+
+                    // 获取输入缓冲区
+                    val inputBufferIndex = videoEncoder.dequeueInputBuffer(-1)
+                    if (inputBufferIndex >= 0) {
+                        val inputBuffer = videoEncoder.getInputBuffer(inputBufferIndex)
+                        inputBuffer?.clear()
+                        inputBuffer?.put(yuvData)
+                        
+                        val presentationTimeUs = frameIndex * frameTimeUs
+                        videoEncoder.queueInputBuffer(inputBufferIndex, 0, yuvData.size, presentationTimeUs, 0)
+                    }
+                    
+                    // 处理编码输出
+                    var outputDone = false
+                    while (!outputDone) {
+                        val bufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 10000)
+                        
+                        if (bufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                            outputDone = true
+                        } else if (bufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            // 重要：在收到输出格式变更后才添加轨道并启动muxer
+                            if (videoTrackIndex == -1) {
+                                val newFormat = videoEncoder.outputFormat
+                                videoTrackIndex = muxer.addTrack(newFormat)
+                                muxer.start()
+                                muxerStarted = true
+                            }
+                        } else if (bufferIndex >= 0) {
+                            val encodedData = videoEncoder.getOutputBuffer(bufferIndex)
+                            
+                            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                bufferInfo.size = 0
+                            }
+                            
+                            if (bufferInfo.size > 0 && muxerStarted) {
+                                encodedData?.position(bufferInfo.offset)
+                                encodedData?.limit(bufferInfo.offset + bufferInfo.size)
+                                muxer.writeSampleData(videoTrackIndex, encodedData!!, bufferInfo)
+                            }
+                            
+                            videoEncoder.releaseOutputBuffer(bufferIndex, false)
+                            
+                            if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                                outputDone = true
+                            }
+                        }
+                    }
+                    
+                    // 每10帧延迟一下，避免过热
+                    if (frameIndex % 10 == 0) {
+                        delay(50)
+                    }
+                }
+                
+                // 标记视频流结束
+                val inputBufferIndex = videoEncoder.dequeueInputBuffer(-1)
+                if (inputBufferIndex >= 0) {
+                    videoEncoder.queueInputBuffer(
+                        inputBufferIndex, 0, 0,
+                        photoPaths.size * frameTimeUs,
+                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                    )
+                }
+
+                // 处理剩余的编码输出
+                var encoderDone = false
+                while (!encoderDone) {
+                    val bufferIndex = videoEncoder.dequeueOutputBuffer(bufferInfo, 10000)
+                    
+                    if (bufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                        encoderDone = true
+                    } else if (bufferIndex >= 0) {
+                        val encodedData = videoEncoder.getOutputBuffer(bufferIndex)
+                        
+                        if (bufferInfo.size > 0 && muxerStarted) {
+                            encodedData?.position(bufferInfo.offset)
+                            encodedData?.limit(bufferInfo.offset + bufferInfo.size)
+                            muxer.writeSampleData(videoTrackIndex, encodedData!!, bufferInfo)
+                        }
+                        
+                        videoEncoder.releaseOutputBuffer(bufferIndex, false)
+                        
+                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            encoderDone = true
+                        }
+                    }
+                }
+
+                // 清理资源
+                try {
+                    videoEncoder.stop()
+                    videoEncoder.release()
+                    
+                    muxer.stop()
+                    muxer.release()
+                } catch (e: Exception) {
+                    Log.e("EditActivity", "清理资源错误: ${e.message}", e)
+                }
+                
+            } catch (e: Exception) {
+                Log.e("EditActivity", "视频导出错误: ${e.message}", e)
+                throw e
+            }
+        }
+    }
+
+    private fun createVideoFile(): File {
+        val filename = "stop_motion_${System.currentTimeMillis()}.mp4"
+        
+        // 检查是否有存储权限
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // 对于Android 10及以上，使用应用私有目录
+            return File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), filename)
+        } else {
+            // 对于低版本Android，也使用应用私有目录
+            return File(getExternalFilesDir(Environment.DIRECTORY_MOVIES), filename)
+        }
     }
 }
 
