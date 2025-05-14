@@ -3,4 +3,5 @@
 <resources>
     <dimen name="photo_spacing">4dp</dimen> <!-- 这里可以设置间距的值 -->
     <dimen name="preview_item_spacing">8dp</dimen>
+    <dimen name="delete_button_width">56dp</dimen>
 </resources>

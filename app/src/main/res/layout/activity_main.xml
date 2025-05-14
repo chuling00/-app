@@ -31,22 +31,61 @@
                 android:text="进入拍摄界面" />
         </RelativeLayout>
 
-        <!-- 项目列表容器 -->
-        <ScrollView
+        <!-- 替换ScrollView和LinearLayout为GridView -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/projectRecyclerView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
-
-            <LinearLayout
-                android:id="@+id/projectContainer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp"/>
-
-        </ScrollView>
+            android:layout_height="match_parent"
+            android:padding="8dp"/>
 
     </LinearLayout>
 
+    <!-- 底部操作栏 -->
+    <LinearLayout
+        android:id="@+id/bottomActionBar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="#444444"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent">
 
+        <ImageButton
+            android:id="@+id/deleteButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:src="@drawable/ic_delete"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="删除" />
+
+        <ImageButton
+            android:id="@+id/playButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:src="@drawable/ic_play"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="播放" />
+
+        <ImageButton
+            android:id="@+id/renameButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:src="@drawable/ic_rename"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="重命名" />
+
+        <ImageButton
+            android:id="@+id/exportButton"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:src="@drawable/ic_export"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="导出" />
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

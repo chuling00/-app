@@ -1,7 +1,3 @@
 package com.example.myapplication
  
-data class ProjectInfo(
-    val name: String,
-    val createTime: Long,
-    val photoCount: Int = 0
-) 
+data class ProjectInfo(var name: String, val createTime: Long, val photoCount: Int = 0) 

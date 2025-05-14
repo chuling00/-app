@@ -33,6 +33,16 @@ import com.bumptech.glide.request.target.Target
 import android.graphics.drawable.Drawable
 import com.bumptech.glide.load.engine.GlideException
 import javax.sql.DataSource
+import android.view.ScaleGestureDetector
+import androidx.lifecycle.LiveData
+import androidx.camera.core.ZoomState
+import androidx.lifecycle.Observer
+import android.util.DisplayMetrics
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import android.util.Size
+import androidx.camera.core.AspectRatio
 
 class CaptureActivity : AppCompatActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -93,6 +103,67 @@ class CaptureActivity : AppCompatActivity() {
     private var isInsertMode = false
     private var insertPosition = -1
     private var selectedPhotoPath: String? = null
+
+    // 在类定义中添加变量
+    private var cameraZoomState: LiveData<ZoomState>? = null
+    private var currentZoomRatio = 1f
+    private var minZoom = 0f
+    private var maxZoom = 5f
+    private var lastZoomUpdateTime = 0L
+    private val ZOOM_UPDATE_THRESHOLD = 50L // 毫秒
+    private val ZOOM_CHANGE_THRESHOLD = 0.02f // 最小变化阈值
+
+    // 在类定义中添加
+    private lateinit var scaleGestureDetector: ScaleGestureDetector
+
+    // 优化后的缩放监听器实现，增大缩放系数
+    private val scaleGestureListener = object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            camera?.let { cam ->
+                // 获取当前时间，用于节流
+                val currentTime = System.currentTimeMillis()
+                
+                // 计算新的缩放比例，大幅增强缩放效果
+                val delta = detector.scaleFactor
+                val scaleFactor = if (delta > 1f) {
+                    1f + (delta - 1f) * 3.5f  // 放大时大幅增强效果
+                } else {
+                    1f - (1f - delta) * 3.5f  // 缩小时大幅增强效果
+                }
+                
+                // 计算新的缩放值
+                val newZoomRatio = currentZoomRatio * scaleFactor
+                
+                // 限制在有效范围内
+                val clampedZoom = newZoomRatio.coerceIn(minZoom.coerceAtLeast(0.1f), maxZoom)
+                
+                // 只有当变化足够大且距离上次更新时间足够长，才更新缩放
+                if (Math.abs(clampedZoom - currentZoomRatio) > ZOOM_CHANGE_THRESHOLD && 
+                    currentTime - lastZoomUpdateTime > ZOOM_UPDATE_THRESHOLD) {
+                    
+                    // 使用线性缩放而不是比例缩放，效果更平滑
+                    val zoomState = cam.cameraInfo.zoomState.value
+                    if (zoomState != null) {
+                        // 将比例缩放转换为线性缩放 (0-1范围)
+                        val linearZoom = (clampedZoom - zoomState.minZoomRatio) / 
+                                        (zoomState.maxZoomRatio - zoomState.minZoomRatio)
+                        
+                        // 使用线性缩放API
+                        cam.cameraControl.setLinearZoom(linearZoom.coerceIn(0f, 1f))
+                    } else {
+                        // 如果无法获取zoomState，则使用比例缩放
+                        cam.cameraControl.setZoomRatio(clampedZoom)
+                    }
+                    
+                    // 更新当前缩放值和时间戳
+                    currentZoomRatio = clampedZoom
+                    lastZoomUpdateTime = currentTime
+                }
+                return true
+            }
+            return false
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -263,6 +334,25 @@ class CaptureActivity : AppCompatActivity() {
         btnGrid.setOnClickListener {
             toggleGrid()
         }
+
+        // 添加预览区域的点击事件
+        previewContainer.setOnClickListener {
+            if (photoFiles.isNotEmpty()) {
+                // 启动预览活动
+                val intent = Intent(this, PreviewActivity::class.java)
+                intent.putExtra("PHOTO_INDEX", photoFiles.size - 1) // 显示最后一张照片
+                
+                // 将所有照片路径传递给预览活动
+                val photoPaths = ArrayList<String>()
+                photoFiles.forEach { file ->
+                    photoPaths.add(file.absolutePath)
+                }
+                intent.putStringArrayListExtra("PHOTO_PATHS", photoPaths)
+                
+                // 启动预览活动
+                startActivityForResult(intent, REQUEST_PREVIEW)
+            }
+        }
     }
 
     private fun startTimer() {
@@ -334,16 +424,38 @@ class CaptureActivity : AppCompatActivity() {
     }
 
     private fun bindCameraUseCases() {
-        val preview = Preview.Builder().build().also {
+        // 获取设备屏幕尺寸，用于设置相机目标分辨率
+        val metrics = DisplayMetrics().also { 
+            previewView.display?.getRealMetrics(it) 
+        }
+        
+        // 计算屏幕的宽高比
+        val screenAspectRatio = aspectRatio(metrics.widthPixels, metrics.heightPixels)
+        
+        // 根据屏幕比例选择合适的目标分辨率
+        val targetResolution = when (screenAspectRatio) {
+            AspectRatio.RATIO_4_3 -> Size(1440, 1080) // 4:3 比例
+            AspectRatio.RATIO_16_9 -> Size(1920, 1080) // 16:9 比例
+            else -> Size(1920, 1080) // 默认 16:9
+        }
+        
+        // 配置预览
+        val preview = Preview.Builder()
+            .setTargetAspectRatio(screenAspectRatio) // 设置纵横比而不是具体分辨率
+            .build()
+            .also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
 
+        // 配置图像捕获
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetAspectRatio(screenAspectRatio) // 使用相同的纵横比
             .build()
 
         try {
             cameraProvider.unbindAll()
+            
             camera = cameraProvider.bindToLifecycle(
                 this, 
                 cameraSelector, 
@@ -351,15 +463,37 @@ class CaptureActivity : AppCompatActivity() {
                 imageCapture
             )
             
-            // 添加相机拍摄回调
-            camera?.cameraControl?.enableTorch(false)?.addListener({
-                // 在实际快门动作时闪烁
-                showCaptureFlash()
-            }, ContextCompat.getMainExecutor(this))
+            // 初始化缩放状态
+            camera?.cameraInfo?.zoomState?.observe(this, Observer { state ->
+                minZoom = state.minZoomRatio
+                maxZoom = state.maxZoomRatio
+                // 只在初始化时设置当前缩放值，避免覆盖用户操作的值
+                if (currentZoomRatio == 1f) {
+                    currentZoomRatio = state.zoomRatio
+                }
+            })
+            
+            // 初始化缩放检测器
+            scaleGestureDetector = ScaleGestureDetector(this, scaleGestureListener)
+            
+            // 设置触摸监听器
+            previewView.setOnTouchListener { _, event ->
+                scaleGestureDetector.onTouchEvent(event)
+                true
+            }
 
         } catch (exc: Exception) {
             Log.e(TAG, "Use case binding failed", exc)
         }
+    }
+
+    // 添加一个辅助方法来计算纵横比
+    private fun aspectRatio(width: Int, height: Int): Int {
+        val previewRatio = max(width, height).toDouble() / min(width, height)
+        if (abs(previewRatio - 4.0 / 3.0) <= abs(previewRatio - 16.0 / 9.0)) {
+            return AspectRatio.RATIO_4_3
+        }
+        return AspectRatio.RATIO_16_9
     }
 
     private fun switchCamera() {
@@ -434,11 +568,11 @@ class CaptureActivity : AppCompatActivity() {
                     target: Target<Drawable>,
                     isFirstResource: Boolean
                 ): Boolean {
-                    Toast.makeText(
-                        this@CaptureActivity, 
+                        Toast.makeText(
+                            this@CaptureActivity, 
                         "预览图片加载失败", 
-                        Toast.LENGTH_SHORT
-                    ).show()
+                            Toast.LENGTH_SHORT
+                        ).show()
                     return false
                 }
 
@@ -675,15 +809,15 @@ class CaptureActivity : AppCompatActivity() {
             val newFileName = "photo_${String.format("%04d", index + 1)}.jpg"
             val newFile = File(projectDir, newFileName)
             try {
-                if (!photoFile.renameTo(newFile)) {
-                    // 如果重命名失败，尝试复制文件
-                    photoFile.inputStream().use { input ->
-                        newFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    // 删除原文件
-                    photoFile.delete()
+            if (!photoFile.renameTo(newFile)) {
+                // 如果重命名失败，尝试复制文件
+                photoFile.inputStream().use { input ->
+                    newFile.outputStream().use { output ->
+                        input.copyTo(output)
+                }
+            }
+            // 删除原文件
+            photoFile.delete()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "保存照片失败: ${e.message}")
@@ -769,7 +903,7 @@ class CaptureActivity : AppCompatActivity() {
         if (tempDir.exists()) {
             try {
                 // 确保删除所有文件
-                tempDir.listFiles()?.forEach { file ->
+            tempDir.listFiles()?.forEach { file ->
                     if (!file.delete()) {
                         // 如果删除失败，尝试强制删除
                         file.deleteOnExit()
@@ -819,5 +953,42 @@ class CaptureActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "CaptureActivity"
         private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+        private const val REQUEST_PREVIEW = 200
+    }
+
+    // 处理预览活动的返回结果
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        
+        if (requestCode == REQUEST_PREVIEW && resultCode == RESULT_OK) {
+            // 如果用户在预览中删除了照片，更新我们的照片列表
+            data?.getStringArrayListExtra("DELETED_PHOTOS")?.let { deletedPaths ->
+                if (deletedPaths.isNotEmpty()) {
+                    // 从photoFiles列表中移除被删除的照片
+                    photoFiles.removeAll { file -> 
+                        deletedPaths.contains(file.absolutePath) 
+                    }
+                    
+                    // 更新照片计数
+                    photoCount = photoFiles.size
+                    tvPhotoCount.text = photoCount.toString()
+                    
+                    // 更新预览图像
+                    if (photoFiles.isNotEmpty()) {
+                        updatePreviewImage(photoFiles.last())
+                        lastPhotoForOnion = photoFiles.last()
+                        Glide.with(this)
+                            .load(photoFiles.last())
+                            .centerCrop()
+                            .into(onionSkinView)
+                    } else {
+                        lastCapturedPhoto = null
+                        lastPhotoForOnion = null
+                        ivPreview.setImageDrawable(null)
+                        onionSkinView.setImageDrawable(null)
+                    }
+                }
+            }
+        }
     }
 }

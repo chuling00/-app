@@ -1,59 +1,52 @@
 package com.example.myapplication
 
+import android.Manifest
+import android.app.AlertDialog
+import android.content.ContentValues
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Rect
 import android.media.ExifInterface
-import android.os.Bundle
-import android.view.View
-import android.widget.ImageView
-import android.widget.LinearLayout
-import androidx.appcompat.app.AppCompatActivity
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.bumptech.glide.Glide
-import android.content.pm.ActivityInfo
-import android.widget.ImageButton
-import android.graphics.Color
-import android.content.Context
-import android.view.LayoutInflater
-import android.view.ViewGroup
-import android.os.Handler
-import android.os.Looper
-import android.content.Intent
-import android.app.AlertDialog
-import java.io.File
-import com.bumptech.glide.request.RequestListener
-import com.bumptech.glide.request.target.Target
-import com.bumptech.glide.load.DataSource
-import com.bumptech.glide.load.engine.DiskCacheStrategy
-import android.graphics.drawable.Drawable
-import com.bumptech.glide.load.engine.GlideException
-import com.bumptech.glide.MemoryCategory
-import android.util.LruCache
-import android.widget.Toast
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
-import android.os.Environment
-import androidx.core.content.ContextCompat
-import android.content.ContentValues
-import android.provider.MediaStore
-import android.os.Build
-import kotlinx.coroutines.*
-import java.nio.ByteBuffer
-import android.graphics.Canvas
-import android.view.Surface
-import android.Manifest
-import android.content.pm.PackageManager
-import android.util.Log
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.util.Log
+import android.util.LruCache
+import android.view.View
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import android.widget.Spinner
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
+import com.bumptech.glide.MemoryCategory
+import com.bumptech.glide.load.DataSource
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.load.engine.GlideException
+import com.bumptech.glide.request.RequestListener
+import com.bumptech.glide.request.target.Target
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class EditActivity : AppCompatActivity() {
     private lateinit var mainImageView: ImageView
@@ -111,6 +104,14 @@ class EditActivity : AppCompatActivity() {
 
         // 配置Glide的缓存策略
         Glide.get(this).setMemoryCategory(MemoryCategory.HIGH)
+
+        // 检查是否需要直接导出
+        if (intent.getBooleanExtra("EXPORT_DIRECTLY", false)) {
+            // 延迟一点，等UI加载完成
+            Handler(Looper.getMainLooper()).postDelayed({
+                showExportOptionsDialog()
+            }, 500)
+        }
     }
 
     private fun initializeViews() {
@@ -438,7 +439,17 @@ class EditActivity : AppCompatActivity() {
             return
         }
 
-        // 直接显示质量选择对话框
+        // 在startExportVideo()方法之前添加这个方法
+        showExportOptionsDialog()
+    }
+
+    private fun showExportOptionsDialog() {
+        if (photoPaths.isEmpty()) {
+            Toast.makeText(this, "没有可导出的照片", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // 直接调用导出质量选择对话框
         showExportQualityDialog()
     }
 
@@ -487,7 +498,7 @@ class EditActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .show()
-    }
+                            }
 
     override fun onDestroy() {
         super.onDestroy()
@@ -509,7 +520,7 @@ class EditActivity : AppCompatActivity() {
                 if (insertTempDir.exists()) {
                     insertTempDir.deleteRecursively()
                 }
-                
+
                 // 清理备份临时目录
                 val tempBackupDir = File(cacheDir, "backup_$projectName")
                 if (tempBackupDir.exists()) {
@@ -518,10 +529,10 @@ class EditActivity : AppCompatActivity() {
                 
                 // 清理Glide缓存
                 Glide.get(this@EditActivity).clearDiskCache()
-            } catch (e: Exception) {
-                e.printStackTrace()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
-        }
     }
 
     fun loadCorrectedImage(imageView: ImageView, path: String) {
@@ -894,7 +905,7 @@ class EditActivity : AppCompatActivity() {
                 if (validPaths.isEmpty()) {
                     throw Exception("没有有效的照片文件可以保存")
                 }
-                
+
                 // 根据有效路径重新编号并复制到临时目录
                 var success = true
                 validPaths.forEachIndexed { index, path ->
