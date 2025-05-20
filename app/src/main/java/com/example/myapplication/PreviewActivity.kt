@@ -90,12 +90,12 @@ class PreviewActivity : AppCompatActivity() {
         
         // 从列表中移除
         photoPaths.removeAt(currentPosition)
-        
+            
         if (photoPaths.isEmpty()) {
             // 如果没有照片了，返回结果并关闭
             returnResult()
-            finish()
-        } else {
+                finish()
+            } else {
             // 更新适配器
             val adapter = PhotoPagerAdapter(photoPaths)
             viewPager.adapter = adapter
@@ -106,8 +106,8 @@ class PreviewActivity : AppCompatActivity() {
             }
             viewPager.setCurrentItem(currentPosition, false)
             updatePhotoIndexText()
+            }
         }
-    }
 
     override fun onBackPressed() {
         returnResult()

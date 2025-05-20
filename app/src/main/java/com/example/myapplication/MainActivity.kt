@@ -1,5 +1,6 @@
 package com.example.myapplication
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -19,22 +20,29 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.adapter.FragmentStateAdapter
+import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import java.io.File
+import com.google.android.material.tabs.TabLayout
+import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
     private val REQUEST_CAPTURE = 1001
+    private val REQUEST_PICK_IMAGE = 1002
     private lateinit var projectAdapter: ProjectAdapter
-    private val projectList = ArrayList<ProjectInfo>()
+    val projectList = ArrayList<ProjectInfo>()
     private lateinit var bottomActionBar: LinearLayout
     private lateinit var deleteButton: ImageButton
     private lateinit var playButton: ImageButton
@@ -42,7 +50,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var exportButton: ImageButton
     private var isMultiSelectMode = false
     private val selectedProjects = HashSet<ProjectInfo>()
+    private lateinit var viewPager: ViewPager2
+    private lateinit var tabLayout: TabLayout
 
+    @SuppressLint("WrongViewCast")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -68,9 +79,23 @@ class MainActivity : AppCompatActivity() {
         // 清理所有临时目录
         cleanupTemporaryDirectories()
 
-        // 点击拍摄按钮跳转到拍摄界面
-        val captureButton = findViewById<Button>(R.id.captureButton)
-        captureButton.setOnClickListener {
+        // 点击导入照片按钮
+        val importPhotoButton = findViewById<LinearLayout>(R.id.importPhotoButton)
+        importPhotoButton.setOnClickListener {
+            // 如果在多选模式，先退出多选模式
+            if (isMultiSelectMode) {
+                exitMultiSelectMode()
+            }
+            
+            // 打开系统图库选择照片
+            val intent = Intent(Intent.ACTION_PICK)
+            intent.type = "image/*"
+            startActivityForResult(intent, REQUEST_PICK_IMAGE)
+        }
+
+        // 点击相机按钮跳转到拍摄界面
+        val cameraButton = findViewById<LinearLayout>(R.id.cameraButton)
+        cameraButton.setOnClickListener {
             // 如果在多选模式，先退出多选模式
             if (isMultiSelectMode) {
                 exitMultiSelectMode()
@@ -87,88 +112,131 @@ class MainActivity : AppCompatActivity() {
 
         // 加载项目
         loadProjects()
+
+        // 设置ViewPager和TabLayout
+        viewPager = findViewById(R.id.viewPager)
+        tabLayout = findViewById(R.id.tabLayout)
+
+        // 先设置ViewPager
+        setupViewPager()
+        
+        // 然后设置TabLayout，但不连接到ViewPager
+        setupTabLayout()
     }
     
     private fun enterMultiSelectMode() {
-        isMultiSelectMode = true
-        // 显示底部操作栏
-        bottomActionBar.visibility = View.VISIBLE
-        bottomActionBar.animate()
-            .translationY(0f)
-            .setDuration(300)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+        try {
+            isMultiSelectMode = true
+            // 显示底部操作栏
+            bottomActionBar.visibility = View.VISIBLE
+            bottomActionBar.animate()
+                .translationY(0f)
+                .setDuration(300)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } catch (e: Exception) {
+            // 捕获任何异常，防止应用崩溃
+            e.printStackTrace()
+            Toast.makeText(this, "无法进入多选模式: ${e.message}", Toast.LENGTH_SHORT).show()
+            isMultiSelectMode = false
+        }
     }
     
     private fun exitMultiSelectMode() {
-        isMultiSelectMode = false
-        selectedProjects.clear()
-        // 隐藏底部操作栏
-        bottomActionBar.animate()
-            .translationY(200f)
-            .setDuration(300)
-            .setInterpolator(AccelerateInterpolator())
-            .withEndAction {
-                bottomActionBar.visibility = View.GONE
-            }
-            .start()
-        projectAdapter.notifyDataSetChanged()
+        try {
+            isMultiSelectMode = false
+            selectedProjects.clear()
+            // 隐藏底部操作栏
+            bottomActionBar.animate()
+                .translationY(200f)
+                .setDuration(300)
+                .setInterpolator(AccelerateInterpolator())
+                .withEndAction {
+                    bottomActionBar.visibility = View.GONE
+                }
+                .start()
+            projectAdapter.notifyDataSetChanged()
+        } catch (e: Exception) {
+            // 捕获任何异常，防止应用崩溃
+            e.printStackTrace()
+            Toast.makeText(this, "无法退出多选模式: ${e.message}", Toast.LENGTH_SHORT).show()
+            // 强制重置状态
+            isMultiSelectMode = false
+            selectedProjects.clear()
+            bottomActionBar.visibility = View.GONE
+        }
     }
     
     private fun updateBottomActionBar() {
-        when {
-            selectedProjects.isEmpty() -> {
-                exitMultiSelectMode()
-            }
-            selectedProjects.size == 1 -> {
-                // 显示所有操作按钮
-                playButton.visibility = View.VISIBLE
-                renameButton.visibility = View.VISIBLE
-                exportButton.visibility = View.VISIBLE
-                
-                // 动画显示其他按钮
-                val buttons = listOf(playButton, renameButton, exportButton)
-                buttons.forEachIndexed { index, button ->
-                    button.alpha = 0f
-                    button.translationY = 50f
-                    button.animate()
-                        .alpha(1f)
-                        .translationY(0f)
-                        .setStartDelay(50L * index)
-                        .setDuration(300)
-                        .start()
+        try {
+            when {
+                selectedProjects.isEmpty() -> {
+                    exitMultiSelectMode()
+                }
+                selectedProjects.size == 1 -> {
+                    // 显示所有操作按钮
+                    playButton.visibility = View.VISIBLE
+                    renameButton.visibility = View.VISIBLE
+                    exportButton.visibility = View.VISIBLE
+                    
+                    // 动画显示其他按钮
+                    val buttons = listOf(playButton, renameButton, exportButton)
+                    buttons.forEachIndexed { index, button ->
+                        button.alpha = 0f
+                        button.translationY = 50f
+                        button.animate()
+                            .alpha(1f)
+                            .translationY(0f)
+                            .setStartDelay(50L * index)
+                            .setDuration(300)
+                            .start()
+                    }
+                }
+                else -> {
+                    // 多选模式只显示删除按钮，但位置不变
+                    
+                    // 隐藏其他按钮
+                    val buttons = listOf(playButton, renameButton, exportButton)
+                    buttons.forEach { button ->
+                        button.animate()
+                            .alpha(0f)
+                            .translationY(50f)
+                            .setDuration(300)
+                            .withEndAction {
+                                button.visibility = View.GONE
+                            }
+                            .start()
+                    }
                 }
             }
-            else -> {
-                // 多选模式只显示删除按钮，但位置不变
-                
-                // 隐藏其他按钮
-                val buttons = listOf(playButton, renameButton, exportButton)
-                buttons.forEach { button ->
-                    button.animate()
-                        .alpha(0f)
-                        .translationY(50f)
-                        .setDuration(300)
-                        .withEndAction {
-                            button.visibility = View.GONE
-                        }
-                        .start()
-                }
+        } catch (e: Exception) {
+            // 捕获任何异常，防止应用崩溃
+            e.printStackTrace()
+            Toast.makeText(this, "无法更新底部操作栏: ${e.message}", Toast.LENGTH_SHORT).show()
+            // 确保底部栏一定可见
+            if (isMultiSelectMode) {
+                bottomActionBar.visibility = View.VISIBLE
             }
         }
     }
     
     private fun toggleProjectSelection(project: ProjectInfo) {
-        if (selectedProjects.contains(project)) {
-            selectedProjects.remove(project)
-        } else {
-            selectedProjects.add(project)
+        try {
+            if (selectedProjects.contains(project)) {
+                selectedProjects.remove(project)
+            } else {
+                selectedProjects.add(project)
+            }
+            updateBottomActionBar()
+            projectAdapter.notifyDataSetChanged()
+        } catch (e: Exception) {
+            // 捕获任何异常，防止应用崩溃
+            e.printStackTrace()
+            Toast.makeText(this, "无法选择项目: ${e.message}", Toast.LENGTH_SHORT).show()
         }
-        updateBottomActionBar()
-        projectAdapter.notifyDataSetChanged()
     }
     
-    private fun deleteSelectedProjects() {
+    public fun deleteSelectedProjects() {
         if (selectedProjects.isEmpty()) return
         
         AlertDialog.Builder(this)
@@ -184,7 +252,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
     
-    private fun playSelectedProject() {
+    public fun playSelectedProject() {
         // 只能播放单个项目
         if (selectedProjects.size == 1) {
             val project = selectedProjects.first()
@@ -211,7 +279,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    private fun renameSelectedProject() {
+    public fun renameSelectedProject() {
         // 只能重命名单个项目
         if (selectedProjects.size == 1) {
             val project = selectedProjects.first()
@@ -293,7 +361,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    private fun exportSelectedProject() {
+    public fun exportSelectedProject() {
         // 只能导出单个项目
         if (selectedProjects.size == 1) {
             val project = selectedProjects.first()
@@ -322,32 +390,87 @@ class MainActivity : AppCompatActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_CAPTURE && resultCode == RESULT_OK) {
-            // 检查是否是创建项目的请求
-            if (data?.getBooleanExtra("CREATE_PROJECT", false) == true) {
-                val projectName = data.getStringExtra("PROJECT_NAME") ?: ""
-                if (projectName.isNotEmpty()) {
-                    createProject(projectName)
+        
+        when (requestCode) {
+            REQUEST_CAPTURE -> {
+                if (resultCode == RESULT_OK) {
+                    // 检查是否是创建项目的请求
+                    if (data?.getBooleanExtra("CREATE_PROJECT", false) == true) {
+                        val projectName = data.getStringExtra("PROJECT_NAME") ?: ""
+                        if (projectName.isNotEmpty()) {
+                            createProject(projectName)
+                        }
+                    }
+                }
+            }
+            
+            REQUEST_PICK_IMAGE -> {
+                if (resultCode == RESULT_OK && data != null) {
+                    // 获取选择的图片URI
+                    val selectedImageUri = data.data
+                    if (selectedImageUri != null) {
+                        // 弹出对话框让用户输入项目名称
+                        val input = androidx.appcompat.widget.AppCompatEditText(this)
+                        input.hint = "请输入项目名称"
+                        input.setSingleLine()
+                        
+                        AlertDialog.Builder(this)
+                            .setTitle("创建新项目")
+                            .setView(input)
+                            .setPositiveButton("确定") { _, _ ->
+                                val projectName = input.text.toString().trim()
+                                if (projectName.isNotEmpty()) {
+                                    importPhotoToProject(selectedImageUri, projectName)
+                                } else {
+                                    Toast.makeText(this, "项目名称不能为空", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
+                    }
                 }
             }
         }
     }
 
-    private fun loadProjects() {
-        projectList.clear()
-        // 获取项目列表
-        val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
-        val projectsJson = sharedPrefs.getString("project_list", "[]")
-        val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
-            projectsJson,
-            object : TypeToken<ArrayList<ProjectInfo>>() {}.type
-        )
+    public fun loadProjects() {
+        try {
+            projectList.clear()
+            // 获取项目列表
+            val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+            val projectsJson = sharedPrefs.getString("project_list", "[]")
+            val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+                projectsJson,
+                object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+            )
 
-        // 添加所有项目到列表
-        projectList.addAll(projectsList)
-        
-        // 通知适配器更新
-        projectAdapter.notifyDataSetChanged()
+            // 过滤掉name为null的项目
+            val validProjects = projectsList.filter { it.name != null }
+            
+            // 添加有效项目到列表
+            projectList.addAll(validProjects)
+            
+            // 如果过滤掉了无效项目，保存更新后的列表
+            if (validProjects.size < projectsList.size) {
+                saveValidProjects(validProjects)
+            }
+            
+            // 通知适配器更新
+            projectAdapter.notifyDataSetChanged()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "加载项目列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
+    // 添加保存有效项目的方法
+    private fun saveValidProjects(validProjects: List<ProjectInfo>) {
+        try {
+            val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+            sharedPrefs.edit().putString("project_list", Gson().toJson(validProjects)).apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onResume() {
@@ -414,7 +537,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun createProject(projectName: String) {
+    public fun createProject(projectName: String) {
         // 获取唯一的项目名称
         val uniqueProjectName = getUniqueProjectName(projectName)
         
@@ -543,8 +666,8 @@ class MainActivity : AppCompatActivity() {
             val imageView: ImageView = itemView.findViewById(R.id.projectPreview)
             val nameTextView: TextView = itemView.findViewById(R.id.projectName)
             val countTextView: TextView = itemView.findViewById(R.id.photoCount)
-            val selectionOverlay: View = itemView.findViewById(R.id.selectionOverlay)
-            val checkIcon: ImageView = itemView.findViewById(R.id.checkIcon)
+            val selectionOverlay: View? = itemView.findViewById(R.id.selectionOverlay)
+            val checkIcon: ImageView? = itemView.findViewById(R.id.checkIcon)
         }
         
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ProjectViewHolder {
@@ -554,68 +677,240 @@ class MainActivity : AppCompatActivity() {
         }
         
         override fun onBindViewHolder(holder: ProjectViewHolder, position: Int) {
-            val project = projects[position]
+            // 在方法级别声明project变量，使其对所有块都可见
+            val project = try {
+                projects[position]
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
             
-            // 设置项目名称
-            holder.nameTextView.text = project.name
-            
-            // 加载项目预览图
-            val projectDir = File(getExternalFilesDir(null), "projects/${project.name}")
-            val firstPhoto = projectDir.listFiles()?.firstOrNull { it.extension == "jpg" }
-            
-            if (firstPhoto != null && firstPhoto.exists() && firstPhoto.length() > 0) {
-                Glide.with(this@MainActivity)
-                    .load(firstPhoto)
-                    .skipMemoryCache(true)
-                    .diskCacheStrategy(DiskCacheStrategy.NONE)
-                    .fitCenter()
-                    .into(holder.imageView)
-            } else {
+            // 如果项目为null，则显示错误状态并返回
+            if (project == null) {
+                holder.nameTextView.text = "加载错误"
                 holder.imageView.setImageDrawable(null)
+                holder.countTextView.text = "照片数量：未知"
+                holder.selectionOverlay?.visibility = View.GONE
+                holder.checkIcon?.visibility = View.GONE
+                
+                // 为空项目设置一个空点击/长按监听器
+                holder.itemView.setOnClickListener {
+                    Toast.makeText(this@MainActivity, "无效的项目", Toast.LENGTH_SHORT).show()
+                }
+                holder.itemView.setOnLongClickListener { false }
+                return
             }
             
-            // 设置照片数量
-            val photoCount = projectDir.listFiles()?.count { it.extension == "jpg" } ?: 0
-            holder.countTextView.text = "照片数量：$photoCount"
-            
-            // 设置多选状态UI
-            val isSelected = selectedProjects.contains(project)
-            holder.selectionOverlay.visibility = if (isSelected) View.VISIBLE else View.GONE
-            holder.checkIcon.visibility = if (isSelected) View.VISIBLE else View.GONE
-            
-            // 设置点击事件
-            holder.itemView.setOnClickListener {
-                if (isMultiSelectMode) {
-                    // 多选模式下点击切换选择状态
-                    toggleProjectSelection(project)
+            try {
+                // 检查项目名称是否为null，如果是则显示未命名项目
+                if (project.name == null) {
+                    holder.nameTextView.text = "未命名项目"
+                    holder.imageView.setImageDrawable(null)
+                    holder.countTextView.text = "照片数量：0"
+                    holder.selectionOverlay?.visibility = View.GONE
+                    holder.checkIcon?.visibility = View.GONE
+                    
+                    // 为无效名称的项目设置空点击/长按监听器
+                    holder.itemView.setOnClickListener {
+                        Toast.makeText(this@MainActivity, "无效的项目", Toast.LENGTH_SHORT).show()
+                    }
+                    holder.itemView.setOnLongClickListener { false }
+                    return
+                }
+                
+                // 设置项目名称
+                holder.nameTextView.text = project.name
+                
+                // 加载项目预览图
+                val projectDir = File(getExternalFilesDir(null), "projects/${project.name}")
+                val firstPhoto = projectDir.listFiles()?.firstOrNull { it.extension == "jpg" }
+                
+                if (firstPhoto != null && firstPhoto.exists() && firstPhoto.length() > 0) {
+                    Glide.with(this@MainActivity)
+                        .load(firstPhoto)
+                        .skipMemoryCache(true)
+                        .diskCacheStrategy(DiskCacheStrategy.NONE)
+                        .fitCenter()
+                        .into(holder.imageView)
                 } else {
-                    // 正常模式下点击打开项目
-                    val photoPaths = projectDir.listFiles()
-                        ?.filter { it.extension == "jpg" }
-                        ?.map { it.absolutePath }
-                        ?: emptyList()
+                    holder.imageView.setImageDrawable(null)
+                }
+                
+                // 设置照片数量
+                val photoCount = projectDir.listFiles()?.count { it.extension == "jpg" } ?: 0
+                holder.countTextView.text = "照片数量：$photoCount"
+                
+                // 设置多选状态UI - 使用安全的方式检查是否包含在选中集合中
+                val isSelected = try {
+                    selectedProjects.contains(project)
+                } catch (e: Exception) {
+                    false
+                }
+                holder.selectionOverlay?.visibility = if (isSelected) View.VISIBLE else View.GONE
+                holder.checkIcon?.visibility = if (isSelected) View.VISIBLE else View.GONE
+                
+                // 设置点击事件 - 现在project变量在整个方法中可见
+                holder.itemView.setOnClickListener {
+                    try {
+                        if (isMultiSelectMode) {
+                            // 多选模式下点击切换选择状态
+                            toggleProjectSelection(project)
+                        } else {
+                            // 正常模式下点击打开项目
+                            val dirPath = "projects/${project.name}"
+                            val projectDir = File(getExternalFilesDir(null), dirPath)
+                            val photoPaths = projectDir.listFiles()
+                                ?.filter { it.extension == "jpg" }
+                                ?.map { it.absolutePath }
+                                ?: emptyList()
 
-                    val intent = Intent(this@MainActivity, EditActivity::class.java)
-                    intent.putStringArrayListExtra("PHOTO_PATHS", ArrayList(photoPaths))
-                    intent.putExtra("PROJECT_NAME", project.name)
-                    startActivity(intent)
+                            val intent = Intent(this@MainActivity, EditActivity::class.java)
+                            intent.putStringArrayListExtra("PHOTO_PATHS", ArrayList(photoPaths))
+                            intent.putExtra("PROJECT_NAME", project.name)
+                            startActivity(intent)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        Toast.makeText(this@MainActivity, "无法打开项目: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
-            }
-            
-            // 设置长按事件
-            holder.itemView.setOnLongClickListener {
-                if (!isMultiSelectMode) {
-                    // 进入多选模式
-                    enterMultiSelectMode()
-                    // 选中当前项目
-                    toggleProjectSelection(project)
-                    true
-                } else {
-                    false // 已经在多选模式，让点击事件处理
+                
+                // 设置长按事件 - 现在project变量在整个方法中可见
+                holder.itemView.setOnLongClickListener {
+                    try {
+                        if (!isMultiSelectMode) {
+                            // 进入多选模式
+                            enterMultiSelectMode()
+                            // 选中当前项目
+                            toggleProjectSelection(project)
+                            true
+                        } else {
+                            false // 已经在多选模式，让点击事件处理
+                        }
+                    } catch (e: Exception) {
+                        // 如果发生任何错误，记录错误并防止应用崩溃
+                        e.printStackTrace()
+                        Toast.makeText(this@MainActivity, "操作失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        false
+                    }
                 }
+            } catch (e: Exception) {
+                // 如果在绑定过程中发生任何异常，记录并设置一个安全的默认状态
+                e.printStackTrace()
+                holder.nameTextView.text = "加载错误"
+                holder.imageView.setImageDrawable(null)
+                holder.countTextView.text = "照片数量：未知"
+                holder.selectionOverlay?.visibility = View.GONE
+                holder.checkIcon?.visibility = View.GONE
+                
+                // 为异常情况设置空点击/长按监听器
+                holder.itemView.setOnClickListener {
+                    Toast.makeText(this@MainActivity, "无法加载此项目", Toast.LENGTH_SHORT).show()
+                }
+                holder.itemView.setOnLongClickListener { false }
             }
         }
         
         override fun getItemCount() = projects.size
+    }
+
+    private fun setupViewPager() {
+        val pagerAdapter = MainPagerAdapter(this)
+        viewPager.adapter = pagerAdapter
+        
+        // 禁用ViewPager2的滑动
+        viewPager.isUserInputEnabled = false
+    }
+
+    private fun setupTabLayout() {
+        // 不使用TabLayoutMediator，因为我们有两个选项卡但只有一个Fragment
+        // 手动设置TabLayout的选择监听器
+        tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                if (tab.position == 0) {
+                    // 显示首页内容
+                    findViewById<LinearLayout>(R.id.layout_main).visibility = View.VISIBLE
+                    viewPager.visibility = View.GONE
+                } else {
+                    // 显示"我的"页面
+                    findViewById<LinearLayout>(R.id.layout_main).visibility = View.GONE
+                    viewPager.visibility = View.VISIBLE
+                    
+                    // 确保ViewPager2显示正确的页面
+                    viewPager.currentItem = 0
+                }
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab) {}
+            override fun onTabReselected(tab: TabLayout.Tab) {}
+        })
+        
+        // 默认选中首页
+        tabLayout.getTabAt(0)?.select()
+        findViewById<LinearLayout>(R.id.layout_main).visibility = View.VISIBLE
+        viewPager.visibility = View.GONE
+    }
+
+    private inner class MainPagerAdapter(fa: FragmentActivity) : FragmentStateAdapter(fa) {
+        override fun getItemCount(): Int = 1 // 只包含"我的"页面
+
+        override fun createFragment(position: Int): Fragment {
+            return ProfileFragment() // 只返回ProfileFragment
+        }
+    }
+
+    fun getProjectAdapter(): ProjectAdapter {
+        return ProjectAdapter(projectList)
+    }
+
+    // 添加导入照片到项目的方法
+    private fun importPhotoToProject(imageUri: android.net.Uri, projectName: String) {
+        // 获取唯一的项目名称
+        val uniqueProjectName = getUniqueProjectName(projectName)
+        
+        // 创建项目目录
+        val projectDir = File(getExternalFilesDir(null), "projects/$uniqueProjectName")
+        projectDir.mkdirs()
+        
+        // 将选择的照片复制到项目目录
+        try {
+            val inputStream = contentResolver.openInputStream(imageUri)
+            val outputFile = File(projectDir, "0001.jpg")
+            val outputStream = outputFile.outputStream()
+            
+            inputStream?.use { input ->
+                outputStream.use { output ->
+                    input.copyTo(output)
+                }
+            }
+            
+            // 保存项目信息
+            val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+            val projectsJson = sharedPrefs.getString("project_list", "[]")
+            val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+                projectsJson,
+                object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+            )
+
+            // 添加新项目信息
+            projectsList.add(0, ProjectInfo(uniqueProjectName, System.currentTimeMillis()))
+
+            // 保存更新后的项目列表
+            sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
+            
+            // 刷新项目列表
+            loadProjects()
+            
+            Toast.makeText(this, "照片导入成功", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "照片导入失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 添加常量
+    companion object {
+        private const val REQUEST_CAPTURE = 1001
+        private const val REQUEST_PICK_IMAGE = 1002
     }
 }

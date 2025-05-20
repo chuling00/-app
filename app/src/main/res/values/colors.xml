@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="black">#7F000000</color>
+    <color name="colorPrimary">#00adb5</color>
+    <color name="colorPrimaryDark">#222831</color>
+    <color name="colorAccent">#00adb5</color>
+    <color name="colorBackground">#eeeeee</color>
+    <color name="colorText">#393e46</color>
+    <color name="colorTextLight">#eeeeee</color>
+    <color name="colorSecondary">#393e46</color>
+    <color name="colorSurface">#222831</color>
+    <color name="colorOnPrimary">#ffffff</color>
+    <color name="colorOnSecondary">#eeeeee</color>
+    <color name="primary">#2196F3</color>
+    <color name="primary_dark">#1976D2</color>
+    <color name="secondary">#FFC107</color>
+    <color name="secondary_dark">#FFA000</color>
+    <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="custom_user_icon_color">#7FF85858</color>
 </resources>

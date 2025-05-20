@@ -2,43 +2,165 @@
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
-    android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#eeeeee"
     tools:context=".MainActivity">
 
-    <!-- res/layout/activity_main.xml -->
+    <com.google.android.material.appbar.AppBarLayout
+        android:id="@+id/appBarLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#222831"
+        app:layout_constraintTop_toTopOf="parent">
 
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/tabLayout"
+            android:layout_width="match_parent"
+            android:layout_height="55dp"
+            android:background="#222831"
+            app:tabIndicatorColor="#00adb5"
+            app:tabSelectedTextColor="#00adb5"
+            app:tabTextColor="#eeeeee"
+            android:layout_marginTop="15dp">
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="首页" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="我的" />
+        </com.google.android.material.tabs.TabLayout>
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <!-- 首页内容 -->
     <LinearLayout
         android:id="@+id/layout_main"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
         android:orientation="vertical"
-        android:background="@android:color/black"
-        tools:context=".MainActivity">
+        android:background="#eeeeee"
+        app:layout_constraintTop_toBottomOf="@+id/appBarLayout"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
 
+        <!-- 项目列表 -->
         <RelativeLayout
             android:id="@+id/rv_project_list"
             android:layout_width="match_parent"
             android:layout_height="180dp"
-            android:background="@drawable/bg_top_gradient">
+            android:background="#000"
+            android:padding="16dp">
 
-            <Button
-                android:id="@+id/captureButton"
+            <!-- 导入照片按钮 -->
+
+            <!-- 相机按钮 -->
+            <LinearLayout
+                android:id="@+id/importPhotoButton"
+                android:layout_width="222dp"
+                android:layout_height="101dp"
+                android:layout_alignParentStart="true"
+                android:layout_alignParentTop="true"
+                android:layout_alignParentBottom="true"
+                android:layout_marginStart="0dp"
+                android:layout_marginTop="15dp"
+                android:layout_marginEnd="16dp"
+                android:layout_marginBottom="15dp"
+                android:layout_toStartOf="@+id/cameraButton"
+                android:background="@drawable/bg_import_photo"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="@drawable/ripple_effect"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp">
+
+                <ImageView
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:contentDescription="导入"
+                    android:src="@drawable/ic_plus" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="导入"
+                    android:textColor="#FFFFFF"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cameraButton"
+                android:layout_width="154dp"
+                android:layout_height="130dp"
+                android:layout_alignParentTop="true"
+                android:layout_alignParentEnd="true"
+                android:layout_alignParentBottom="true"
+                android:layout_marginTop="15dp"
+                android:layout_marginEnd="0dp"
+                android:layout_marginBottom="15dp"
+                android:background="@drawable/bg_camera_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="@drawable/ripple_effect"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:contentDescription="相机"
+                    android:src="@drawable/ic_camera" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="相机"
+                    android:textColor="#222831"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- 底部白色横线 -->
+            <View
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:alpha="0"
-                android:text="进入拍摄界面" />
+                android:layout_height="1dp"
+                android:background="#80FFFFFF"
+                android:layout_alignParentBottom="true"
+                android:layout_marginBottom="-10dp"/>
         </RelativeLayout>
 
-        <!-- 替换ScrollView和LinearLayout为GridView -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="#FFFFFF"/>
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/projectRecyclerView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:padding="8dp"/>
-
+            android:padding="8dp"
+            android:background="#000"/>
     </LinearLayout>
+
+    <!-- ViewPager2用于显示"我的"页面 -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPager"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/appBarLayout" />
 
     <!-- 底部操作栏 -->
     <LinearLayout
