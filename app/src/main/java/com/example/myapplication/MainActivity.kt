@@ -9,7 +9,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
-import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -18,8 +18,6 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.recyclerview.widget.GridLayoutManager
@@ -31,11 +29,13 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.google.android.material.tabs.TabLayout
-import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.io.File
+import android.widget.PopupWindow
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -43,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private val REQUEST_PICK_IMAGE = 1002
     private lateinit var projectAdapter: ProjectAdapter
     val projectList = ArrayList<ProjectInfo>()
+    private val filteredProjectList = ArrayList<ProjectInfo>() // 用于搜索筛选后的项目列表
     private lateinit var bottomActionBar: LinearLayout
     private lateinit var deleteButton: ImageButton
     private lateinit var playButton: ImageButton
@@ -52,6 +53,14 @@ class MainActivity : AppCompatActivity() {
     private val selectedProjects = HashSet<ProjectInfo>()
     private lateinit var viewPager: ViewPager2
     private lateinit var tabLayout: TabLayout
+    
+    // 排序和搜索相关
+    private lateinit var sortButton: LinearLayout
+    private lateinit var sortButtonText: TextView
+    private lateinit var sortButtonIcon: ImageView
+    private lateinit var searchEditText: EditText
+    private var currentSortType = SortType.MODIFIED_DATE // 默认排序类型
+    private var isSearchMode = false // 是否处于搜索模式
 
     @SuppressLint("WrongViewCast")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,6 +74,12 @@ class MainActivity : AppCompatActivity() {
         playButton = findViewById(R.id.playButton)
         renameButton = findViewById(R.id.renameButton)
         exportButton = findViewById(R.id.exportButton)
+        
+        // 初始化排序和搜索相关组件
+        sortButton = findViewById(R.id.sortButton)
+        sortButtonText = findViewById(R.id.sortButtonText)
+        sortButtonIcon = findViewById(R.id.sortButtonIcon)
+        searchEditText = findViewById(R.id.searchEditText)
         
         // 初始设置底部栏隐藏
         bottomActionBar.translationY = 200f
@@ -87,9 +102,10 @@ class MainActivity : AppCompatActivity() {
                 exitMultiSelectMode()
             }
             
-            // 打开系统图库选择照片
-            val intent = Intent(Intent.ACTION_PICK)
+            // 打开系统图库选择照片，支持多选
+            val intent = Intent(Intent.ACTION_GET_CONTENT)
             intent.type = "image/*"
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             startActivityForResult(intent, REQUEST_PICK_IMAGE)
         }
 
@@ -107,9 +123,18 @@ class MainActivity : AppCompatActivity() {
 
         val recyclerView = findViewById<RecyclerView>(R.id.projectRecyclerView)
         recyclerView.layoutManager = GridLayoutManager(this, 2) // 2列网格布局
-        projectAdapter = ProjectAdapter(projectList)
+        projectAdapter = ProjectAdapter(filteredProjectList) // 使用filteredProjectList
         recyclerView.adapter = projectAdapter
 
+        // 设置排序按钮点击事件
+        setupSortButton()
+        
+        // 设置排序选项点击事件
+        setupSortOptions()
+        
+        // 设置搜索功能
+        setupSearch()
+        
         // 加载项目
         loadProjects()
 
@@ -406,9 +431,24 @@ class MainActivity : AppCompatActivity() {
             
             REQUEST_PICK_IMAGE -> {
                 if (resultCode == RESULT_OK && data != null) {
-                    // 获取选择的图片URI
-                    val selectedImageUri = data.data
-                    if (selectedImageUri != null) {
+                    // 获取选择的图片URI列表
+                    val imageUris = ArrayList<android.net.Uri>()
+                    
+                    // 处理多选结果
+                    if (data.clipData != null) {
+                        // 多选情况
+                        val clipData = data.clipData!!
+                        for (i in 0 until clipData.itemCount) {
+                            val imageUri = clipData.getItemAt(i).uri
+                            imageUris.add(imageUri)
+                        }
+                    } else if (data.data != null) {
+                        // 单选情况
+                        imageUris.add(data.data!!)
+                    }
+                    
+                    // 如果有选择照片
+                    if (imageUris.isNotEmpty()) {
                         // 弹出对话框让用户输入项目名称
                         val input = androidx.appcompat.widget.AppCompatEditText(this)
                         input.hint = "请输入项目名称"
@@ -416,11 +456,12 @@ class MainActivity : AppCompatActivity() {
                         
                         AlertDialog.Builder(this)
                             .setTitle("创建新项目")
+                            .setMessage("已选择 ${imageUris.size} 张照片")
                             .setView(input)
                             .setPositiveButton("确定") { _, _ ->
                                 val projectName = input.text.toString().trim()
                                 if (projectName.isNotEmpty()) {
-                                    importPhotoToProject(selectedImageUri, projectName)
+                                    importPhotosToProject(imageUris, projectName)
                                 } else {
                                     Toast.makeText(this, "项目名称不能为空", Toast.LENGTH_SHORT).show()
                                 }
@@ -436,13 +477,13 @@ class MainActivity : AppCompatActivity() {
     public fun loadProjects() {
         try {
             projectList.clear()
-            // 获取项目列表
-            val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
-            val projectsJson = sharedPrefs.getString("project_list", "[]")
-            val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
-                projectsJson,
-                object : TypeToken<ArrayList<ProjectInfo>>() {}.type
-            )
+        // 获取项目列表
+        val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+        val projectsJson = sharedPrefs.getString("project_list", "[]")
+        val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+            projectsJson,
+            object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+        )
 
             // 过滤掉name为null的项目
             val validProjects = projectsList.filter { it.name != null }
@@ -455,8 +496,17 @@ class MainActivity : AppCompatActivity() {
                 saveValidProjects(validProjects)
             }
             
-            // 通知适配器更新
-            projectAdapter.notifyDataSetChanged()
+            // 更新过滤后的列表
+            filteredProjectList.clear()
+            if (isSearchMode) {
+                // 如果在搜索模式，重新执行搜索
+                performSearch(searchEditText.text.toString())
+            } else {
+                // 否则显示全部项目
+                filteredProjectList.addAll(projectList)
+                // 应用排序
+                applySort()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Toast.makeText(this, "加载项目列表失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -528,8 +578,12 @@ class MainActivity : AppCompatActivity() {
                     insertTempDir.deleteRecursively()
                 }
                 
-                // 清理Glide缓存
-                Glide.get(this@MainActivity).clearMemory()
+                // 清理Glide缓存 - 需要在主线程中执行
+                withContext(Dispatchers.Main) {
+                    Glide.get(this@MainActivity).clearMemory()
+                }
+                
+                // 清理磁盘缓存可以在IO线程中执行
                 Glide.get(this@MainActivity).clearDiskCache()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -575,7 +629,11 @@ class MainActivity : AppCompatActivity() {
         )
 
         // 添加新项目信息 - 注意这里使用uniqueProjectName
-        projectsList.add(0, ProjectInfo(uniqueProjectName, System.currentTimeMillis()))
+        projectsList.add(0, ProjectInfo(
+            name = uniqueProjectName,
+            createdTime = System.currentTimeMillis(),
+            lastModified = System.currentTimeMillis()
+        ))
 
         // 保存更新后的项目列表
         sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
@@ -823,21 +881,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupTabLayout() {
-        // 不使用TabLayoutMediator，因为我们有两个选项卡但只有一个Fragment
+        // 不使用TabLayoutMediator，因为我们有三个选项卡但只有两个Fragment
         // 手动设置TabLayout的选择监听器
         tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(tab: TabLayout.Tab) {
-                if (tab.position == 0) {
-                    // 显示首页内容
-                    findViewById<LinearLayout>(R.id.layout_main).visibility = View.VISIBLE
-                    viewPager.visibility = View.GONE
-                } else {
-                    // 显示"我的"页面
-                    findViewById<LinearLayout>(R.id.layout_main).visibility = View.GONE
-                    viewPager.visibility = View.VISIBLE
-                    
-                    // 确保ViewPager2显示正确的页面
-                    viewPager.currentItem = 0
+                when (tab.position) {
+                    0 -> {
+                        // 显示首页内容
+                        findViewById<LinearLayout>(R.id.layout_main).visibility = View.VISIBLE
+                        viewPager.visibility = View.GONE
+                    }
+                    1 -> {
+                        // 显示教学页面
+                        findViewById<LinearLayout>(R.id.layout_main).visibility = View.GONE
+                        viewPager.visibility = View.VISIBLE
+                        viewPager.currentItem = 0 // 教学页面在ViewPager中的位置
+                    }
+                    2 -> {
+                        // 显示"我的"页面
+                        findViewById<LinearLayout>(R.id.layout_main).visibility = View.GONE
+                        viewPager.visibility = View.VISIBLE
+                        viewPager.currentItem = 1 // "我的"页面在ViewPager中的位置
+                    }
                 }
             }
 
@@ -852,10 +917,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class MainPagerAdapter(fa: FragmentActivity) : FragmentStateAdapter(fa) {
-        override fun getItemCount(): Int = 1 // 只包含"我的"页面
+        override fun getItemCount(): Int = 2 // 包含"教学"和"我的"页面
 
         override fun createFragment(position: Int): Fragment {
-            return ProfileFragment() // 只返回ProfileFragment
+            return when (position) {
+                0 -> TutorialFragment.newInstance() // 教学页面
+                else -> ProfileFragment() // 我的页面
+            }
         }
     }
 
@@ -863,8 +931,8 @@ class MainActivity : AppCompatActivity() {
         return ProjectAdapter(projectList)
     }
 
-    // 添加导入照片到项目的方法
-    private fun importPhotoToProject(imageUri: android.net.Uri, projectName: String) {
+    // 添加导入多张照片到项目的方法
+    private fun importPhotosToProject(imageUris: List<android.net.Uri>, projectName: String) {
         // 获取唯一的项目名称
         val uniqueProjectName = getUniqueProjectName(projectName)
         
@@ -872,45 +940,293 @@ class MainActivity : AppCompatActivity() {
         val projectDir = File(getExternalFilesDir(null), "projects/$uniqueProjectName")
         projectDir.mkdirs()
         
-        // 将选择的照片复制到项目目录
         try {
-            val inputStream = contentResolver.openInputStream(imageUri)
-            val outputFile = File(projectDir, "0001.jpg")
-            val outputStream = outputFile.outputStream()
+            // 显示进度对话框
+            val progressDialog = AlertDialog.Builder(this)
+                .setTitle("导入照片中")
+                .setMessage("正在导入照片...")
+                .setCancelable(false)
+                .create()
+            progressDialog.show()
             
-            inputStream?.use { input ->
-                outputStream.use { output ->
-                    input.copyTo(output)
+            // 在后台线程中处理照片导入
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // 将选择的照片复制到项目目录
+                    imageUris.forEachIndexed { index, uri ->
+                        val inputStream = contentResolver.openInputStream(uri)
+                        // 使用4位数字格式命名文件，确保正确排序
+                        val fileName = String.format("%04d.jpg", index + 1)
+                        val outputFile = File(projectDir, fileName)
+                        val outputStream = outputFile.outputStream()
+                        
+                        inputStream?.use { input ->
+                            outputStream.use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    }
+                    
+                    // 保存项目信息
+                    val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
+                    val projectsJson = sharedPrefs.getString("project_list", "[]")
+                    val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
+                        projectsJson,
+                        object : TypeToken<ArrayList<ProjectInfo>>() {}.type
+                    )
+
+                                // 添加新项目信息
+            projectsList.add(0, ProjectInfo(
+                name = uniqueProjectName,
+                createdTime = System.currentTimeMillis(),
+                lastModified = System.currentTimeMillis()
+            ))
+
+                    // 保存更新后的项目列表
+                    sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
+                    
+                    // 切换到主线程更新UI
+                    CoroutineScope(Dispatchers.Main).launch {
+                        // 关闭进度对话框
+                        progressDialog.dismiss()
+                        
+                        // 刷新项目列表
+                        loadProjects()
+                        
+                        Toast.makeText(this@MainActivity, "已成功导入 ${imageUris.size} 张照片", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    
+                    // 切换到主线程显示错误
+                    CoroutineScope(Dispatchers.Main).launch {
+                        // 关闭进度对话框
+                        progressDialog.dismiss()
+                        
+                        Toast.makeText(this@MainActivity, "照片导入失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
-            
-            // 保存项目信息
-            val sharedPrefs = getSharedPreferences("projects", Context.MODE_PRIVATE)
-            val projectsJson = sharedPrefs.getString("project_list", "[]")
-            val projectsList = Gson().fromJson<ArrayList<ProjectInfo>>(
-                projectsJson,
-                object : TypeToken<ArrayList<ProjectInfo>>() {}.type
-            )
-
-            // 添加新项目信息
-            projectsList.add(0, ProjectInfo(uniqueProjectName, System.currentTimeMillis()))
-
-            // 保存更新后的项目列表
-            sharedPrefs.edit().putString("project_list", Gson().toJson(projectsList)).apply()
-            
-            // 刷新项目列表
-            loadProjects()
-            
-            Toast.makeText(this, "照片导入成功", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             e.printStackTrace()
             Toast.makeText(this, "照片导入失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
+    // 保留原来的单张照片导入方法以兼容旧代码
+    private fun importPhotoToProject(imageUri: android.net.Uri, projectName: String) {
+        importPhotosToProject(listOf(imageUri), projectName)
+    }
+
     // 添加常量
     companion object {
         private const val REQUEST_CAPTURE = 1001
         private const val REQUEST_PICK_IMAGE = 1002
+    }
+
+    // 设置排序按钮
+    private fun setupSortButton() {
+        sortButton.setOnClickListener {
+            showSortOptionsMenu()
+        }
+    }
+    
+    // 显示排序选项菜单
+    private fun showSortOptionsMenu() {
+        // 使用PopupWindow实现悬浮菜单
+        val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
+        val popupView = inflater.inflate(R.layout.popup_sort_options, null)
+        
+        // 创建PopupWindow
+        val popupWindow = PopupWindow(
+            popupView,
+            180.dpToPx(),
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true // 可获取焦点
+        )
+        
+        // 设置菜单背景和动画
+        popupWindow.setBackgroundDrawable(ContextCompat.getDrawable(this, R.drawable.sort_menu_background))
+        popupWindow.elevation = 10f
+        popupWindow.animationStyle = R.style.PopupAnimation
+        
+        // 点击外部关闭
+        popupWindow.isOutsideTouchable = true
+        
+        // 初始化菜单项
+        val sortByName = popupView.findViewById<LinearLayout>(R.id.sortByName)
+        val sortByModifiedDate = popupView.findViewById<LinearLayout>(R.id.sortByModifiedDate)
+        val sortByCreationDate = popupView.findViewById<LinearLayout>(R.id.sortByCreationDate)
+        val sortByDuration = popupView.findViewById<LinearLayout>(R.id.sortByDuration)
+        val sortByPhotoCount = popupView.findViewById<LinearLayout>(R.id.sortByPhotoCount)
+        
+        // 更新勾选状态
+        popupView.findViewById<ImageView>(R.id.checkName).visibility = 
+            if (currentSortType == SortType.NAME) View.VISIBLE else View.INVISIBLE
+        popupView.findViewById<ImageView>(R.id.checkModifiedDate).visibility = 
+            if (currentSortType == SortType.MODIFIED_DATE) View.VISIBLE else View.INVISIBLE
+        popupView.findViewById<ImageView>(R.id.checkCreationDate).visibility = 
+            if (currentSortType == SortType.CREATION_DATE) View.VISIBLE else View.INVISIBLE
+        popupView.findViewById<ImageView>(R.id.checkDuration).visibility = 
+            if (currentSortType == SortType.DURATION) View.VISIBLE else View.INVISIBLE
+        popupView.findViewById<ImageView>(R.id.checkPhotoCount).visibility = 
+            if (currentSortType == SortType.PHOTO_COUNT) View.VISIBLE else View.INVISIBLE
+        
+        // 设置点击事件
+        sortByName.setOnClickListener {
+            updateSortType(SortType.NAME)
+            popupWindow.dismiss()
+        }
+        
+        sortByModifiedDate.setOnClickListener {
+            updateSortType(SortType.MODIFIED_DATE)
+            popupWindow.dismiss()
+        }
+        
+        sortByCreationDate.setOnClickListener {
+            updateSortType(SortType.CREATION_DATE)
+            popupWindow.dismiss()
+        }
+        
+        sortByDuration.setOnClickListener {
+            updateSortType(SortType.DURATION)
+            popupWindow.dismiss()
+        }
+        
+        sortByPhotoCount.setOnClickListener {
+            updateSortType(SortType.PHOTO_COUNT)
+            popupWindow.dismiss()
+        }
+        
+        // 显示在排序按钮下方
+        popupWindow.showAsDropDown(sortButton, 0, 0)
+    }
+    
+    // dp转px的辅助方法
+    private fun Int.dpToPx(): Int {
+        val scale = resources.displayMetrics.density
+        return (this * scale + 0.5f).toInt()
+    }
+    
+    // 设置排序选项
+    private fun setupSortOptions() {
+        // 使用PopupWindow时，不需要在这里设置点击事件
+        // 排序选项的点击事件在showSortOptionsMenu方法中设置
+    }
+    
+    // 更新排序类型
+    private fun updateSortType(sortType: SortType) {
+        if (currentSortType == sortType) {
+            // 如果是当前排序类型，则不做任何操作
+            return
+        }
+        
+        // 更新排序类型
+        currentSortType = sortType
+        
+        // 更新排序按钮文本
+        sortButtonText.text = when (sortType) {
+            SortType.NAME -> "电影名称"
+            SortType.MODIFIED_DATE -> "修改日期"
+            SortType.CREATION_DATE -> "创建日期"
+            SortType.DURATION -> "持续时间"
+            SortType.PHOTO_COUNT -> "照片数量"
+        }
+        
+        // 重新排序并刷新列表
+        applySort()
+    }
+    
+    // 设置搜索功能
+    private fun setupSearch() {
+        searchEditText.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val query = s.toString().trim()
+                performSearch(query)
+            }
+        })
+        
+        // 处理键盘搜索按钮
+        searchEditText.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
+                // 隐藏键盘
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.hideSoftInputFromWindow(searchEditText.windowToken, 0)
+                true
+            } else {
+                false
+            }
+        }
+    }
+    
+    // 执行搜索
+    private fun performSearch(query: String) {
+        isSearchMode = query.isNotEmpty()
+        
+        if (isSearchMode) {
+            // 过滤项目列表
+            filteredProjectList.clear()
+            projectList.filter { 
+                it.name?.contains(query, ignoreCase = true) == true 
+            }.let { 
+                filteredProjectList.addAll(it) 
+            }
+        } else {
+            // 恢复完整列表
+            filteredProjectList.clear()
+            filteredProjectList.addAll(projectList)
+        }
+        
+        // 应用排序
+        applySort()
+    }
+    
+    // 应用排序
+    private fun applySort() {
+        when (currentSortType) {
+            SortType.NAME -> {
+                // 按名称排序
+                filteredProjectList.sortBy { it.name }
+            }
+            SortType.MODIFIED_DATE -> {
+                // 按修改日期排序（使用lastModified字段，如果为0则使用createdTime）
+                filteredProjectList.sortByDescending { if (it.lastModified > 0) it.lastModified else it.createdTime }
+            }
+            SortType.CREATION_DATE -> {
+                // 按创建日期排序
+                filteredProjectList.sortByDescending { it.createdTime }
+            }
+            SortType.DURATION -> {
+                // 按持续时间排序（需要实际计算每个项目的持续时间）
+                // 这里使用照片数量作为简化的实现
+                filteredProjectList.sortByDescending { project ->
+                    val projectDir = File(getExternalFilesDir(null), "projects/${project.name}")
+                    projectDir.listFiles()?.count { it.extension == "jpg" } ?: 0
+                }
+            }
+            SortType.PHOTO_COUNT -> {
+                // 按照片数量排序
+                filteredProjectList.sortByDescending { project ->
+                    val projectDir = File(getExternalFilesDir(null), "projects/${project.name}")
+                    projectDir.listFiles()?.count { it.extension == "jpg" } ?: 0
+                }
+            }
+        }
+        
+        // 刷新列表
+        projectAdapter.notifyDataSetChanged()
+    }
+
+    // 排序类型枚举
+    enum class SortType {
+        NAME,           // 电影名称
+        MODIFIED_DATE,  // 修改日期
+        CREATION_DATE,  // 创建日期
+        DURATION,       // 持续时间
+        PHOTO_COUNT     // 照片数量
     }
 }

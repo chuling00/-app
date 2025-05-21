@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="180dp"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/sort_menu_background">
+
+    <LinearLayout
+        android:id="@+id/sortByName"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?android:attr/selectableItemBackground">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="电影名称"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"/>
+
+        <ImageView
+            android:id="@+id/checkName"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_check"
+            android:visibility="invisible"
+            android:contentDescription="已选中"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/sortByModifiedDate"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?android:attr/selectableItemBackground">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="修改日期"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"/>
+
+        <ImageView
+            android:id="@+id/checkModifiedDate"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_check"
+            android:visibility="visible"
+            android:contentDescription="已选中"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/sortByCreationDate"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?android:attr/selectableItemBackground">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="创建日期"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"/>
+
+        <ImageView
+            android:id="@+id/checkCreationDate"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_check"
+            android:visibility="invisible"
+            android:contentDescription="已选中"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/sortByDuration"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?android:attr/selectableItemBackground">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="持续时间"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"/>
+
+        <ImageView
+            android:id="@+id/checkDuration"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_check"
+            android:visibility="invisible"
+            android:contentDescription="已选中"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/sortByPhotoCount"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:background="?android:attr/selectableItemBackground">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="照片数量"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"/>
+
+        <ImageView
+            android:id="@+id/checkPhotoCount"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_check"
+            android:visibility="invisible"
+            android:contentDescription="已选中"/>
+    </LinearLayout>
+</LinearLayout> 

@@ -32,6 +32,11 @@
             <com.google.android.material.tabs.TabItem
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:text="教学" />
+
+            <com.google.android.material.tabs.TabItem
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:text="我的" />
         </com.google.android.material.tabs.TabLayout>
     </com.google.android.material.appbar.AppBarLayout>
@@ -142,6 +147,68 @@
             android:layout_width="match_parent"
             android:layout_height="2dp"
             android:background="#FFFFFF"/>
+
+        <!-- 搜索和排序栏 -->
+        <LinearLayout
+            android:id="@+id/searchSortContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:background="#000">
+
+            <!-- 排序按钮 -->
+            <LinearLayout
+                android:id="@+id/sortButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:orientation="horizontal"
+                android:background="@drawable/sort_button_background"
+                android:gravity="center_vertical"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:layout_marginEnd="8dp">
+
+                <TextView
+                    android:id="@+id/sortButtonText"
+                    android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                    android:text="修改日期"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"/>
+
+                <ImageView
+                    android:id="@+id/sortButtonIcon"
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_sort_down"
+                    android:layout_marginStart="8dp"
+                    android:contentDescription="排序"/>
+            </LinearLayout>
+
+            <!-- 搜索框 -->
+            <EditText
+                android:id="@+id/searchEditText"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:background="@drawable/search_background"
+                android:drawableStart="@drawable/ic_search"
+                android:drawablePadding="8dp"
+                android:hint="搜索项目"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#80FFFFFF"
+                android:textSize="14sp"/>
+    </LinearLayout>
+
+
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/projectRecyclerView"

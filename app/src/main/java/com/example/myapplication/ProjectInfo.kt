@@ -8,6 +8,13 @@ data class ProjectInfo(
     val photoCount: Int = 0,
     val lastModified: Long = 0
 ) {
+    // 次构造函数，兼容旧代码
+    constructor(name: String, timestamp: Long) : this(
+        name = name,
+        createdTime = timestamp,
+        lastModified = timestamp
+    )
+    
     // 重写equals方法，确保name为null时不会崩溃
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
